@@ -403,9 +403,12 @@ async def _seed_demo_account() -> None:
     - 5 projects: residential-berlin, office-london, medical-us,
       school-paris, warehouse-dubai (each with 2 BOQs: detailed + budget)
 
-    Disable with SEED_DEMO=false in production.
+    Disable with SEED_DEMO=false. In production it's opt-IN (default
+    false) to avoid hitting Railway free-tier disk/memory limits on every
+    cold start.
     """
-    if os.environ.get("SEED_DEMO", "true").lower() in ("false", "0", "no"):
+    default = "false" if os.environ.get("APP_ENV", "development") == "production" else "true"
+    if os.environ.get("SEED_DEMO", default).lower() in ("false", "0", "no"):
         return
 
     from sqlalchemy import func, select

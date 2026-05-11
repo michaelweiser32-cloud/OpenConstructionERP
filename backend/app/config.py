@@ -141,7 +141,7 @@ class Settings(BaseSettings):
     # Task / Risk / BIM rows are not yet embedded.  Set ``false`` to
     # disable in low-resource deployments where you'd rather call
     # ``/vector/reindex/`` manually per module.
-    vector_auto_backfill: bool = True
+    vector_auto_backfill: bool = False
     # Per-collection cap for the auto backfill — protects against the
     # case where someone enables backfill on a 5M-row tenant on first
     # boot and the embedding loop saturates CPU for 30 minutes.  Set to
@@ -193,15 +193,15 @@ class Settings(BaseSettings):
 
     # ── Rate Limiting ────────────────────────────────────────────────────
     api_rate_limit: int = Field(
-        default=100,
+        default=300,
         description="Maximum API requests per minute per user/IP",
     )
     login_rate_limit: int = Field(
-        default=10,
-        description="Maximum login attempts per minute per IP",
+        default=50,
+        description="Maximum login/register attempts per minute per IP. Friendly for shared NAT (offices, mobile carriers) while still blocking credential-stuffing bots.",
     )
     ai_rate_limit: int = Field(
-        default=10,
+        default=30,
         description="Maximum AI requests per minute per user",
     )
 
