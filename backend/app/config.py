@@ -83,6 +83,7 @@ class Settings(BaseSettings):
     app_debug: bool = True
     log_level: Literal["DEBUG", "INFO", "WARNING", "ERROR"] = "INFO"
     allowed_origins: str = "http://localhost:5173"
+    cors_origin_regex: str = ""  # e.g. r"https://myapp\.vercel\.app" — empty means use built-in vercel.app wildcard
 
     # ── Database ─────────────────────────────────────────────────────────
     # Default: SQLite (zero config, works out of the box)

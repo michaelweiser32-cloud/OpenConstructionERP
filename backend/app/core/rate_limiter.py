@@ -98,6 +98,11 @@ def _create_limiters() -> tuple[RateLimiter, RateLimiter, RateLimiter]:
 # Global instances — configured from environment variables
 ai_limiter, api_limiter, login_limiter = _create_limiters()
 
+# Separate limiter for password-reset requests. Tighter than login because
+# each reset fires an email (quota cost + user annoyance) and is harder to
+# justify retrying frequently from a single IP.
+password_reset_limiter = RateLimiter(max_requests=5, window_seconds=60)
+
 # Rate limiter for approval / financial mutation endpoints.
 # Tighter window to limit potential abuse of state-changing actions.
 approval_limiter = RateLimiter(max_requests=20, window_seconds=60)

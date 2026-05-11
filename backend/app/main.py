@@ -548,11 +548,22 @@ def create_app() -> FastAPI:
         if not cors_origins:
             cors_origins = ["https://openconstructionerp.com"]
 
-    # Auto-allow Vercel deployment URLs (preview + production) via regex.
-    # Matches https://<anything>.vercel.app — covers vercel previews without
-    # needing to enumerate every deploy URL in ALLOWED_ORIGINS.
-    cors_origin_regex = r"https://([a-zA-Z0-9-]+\.)*vercel\.app"
+    # CORS origin regex — allows all *.vercel.app subdomains so preview
+    # deployments work without enumerating each URL. In production, prefer
+    # setting ALLOWED_ORIGINS=https://yourapp.vercel.app to narrow this.
+    # The regex is intentionally specific to vercel.app; it does NOT cover
+    # arbitrary third-party domains.
+    cors_origin_regex = settings.cors_origin_regex or r"https://([a-zA-Z0-9-]+\.)*vercel\.app"
+    if settings.is_production and not settings.cors_origin_regex:
+        logger.warning(
+            "CORS: using broad *.vercel.app regex. "
+            "Set CORS_ORIGIN_REGEX or ALLOWED_ORIGINS to narrow this to your specific domain."
+        )
 
+    # Auth uses JWT in the Authorization header (not cookies), so
+    # allow_credentials is not required for auth to work. It is kept True
+    # so that future cookie-based features (refresh rotation, SSO) don't
+    # silently break — but tighten this if cookies are not in use.
     app.add_middleware(
         CORSMiddleware,
         allow_origins=cors_origins,
