@@ -498,9 +498,15 @@ def create_app() -> FastAPI:
         if not cors_origins:
             cors_origins = ["https://openconstructionerp.com"]
 
+    # Auto-allow Vercel deployment URLs (preview + production) via regex.
+    # Matches https://<anything>.vercel.app — covers vercel previews without
+    # needing to enumerate every deploy URL in ALLOWED_ORIGINS.
+    cors_origin_regex = r"https://([a-zA-Z0-9-]+\.)*vercel\.app"
+
     app.add_middleware(
         CORSMiddleware,
         allow_origins=cors_origins,
+        allow_origin_regex=cors_origin_regex,
         allow_credentials=True,
         allow_methods=["GET", "HEAD", "POST", "PATCH", "PUT", "DELETE", "OPTIONS"],
         allow_headers=["Content-Type", "Authorization", "Accept", "Accept-Language"],
