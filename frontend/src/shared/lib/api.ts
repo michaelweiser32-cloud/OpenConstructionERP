@@ -15,7 +15,22 @@ import { useToastStore } from '@/stores/useToastStore';
 import { cacheResponse, getCachedResponse, queueMutation } from './offlineStore';
 import { logApiError, logError } from './errorLogger';
 
-const BASE_URL = (import.meta.env.VITE_API_URL as string | undefined)?.replace(/\/$/, '') ?? '/api';
+// Resolve API base URL in this order:
+//   1. VITE_API_URL build-time env var (preferred — set per deployment)
+//   2. Hardcoded Railway production URL when running on *.vercel.app
+//      (covers the case where the host's experimentalServices catches
+//      /api/* before the rewrite rule applies)
+//   3. Same-origin /api (dev with Vite proxy, or self-hosted unified image)
+function _resolveBaseUrl(): string {
+  const envUrl = (import.meta.env.VITE_API_URL as string | undefined)?.replace(/\/$/, '');
+  if (envUrl) return envUrl;
+  if (typeof window !== 'undefined' && /\.vercel\.app$/.test(window.location.hostname)) {
+    return 'https://openconstructionerp-production.up.railway.app/api';
+  }
+  return '/api';
+}
+
+const BASE_URL = _resolveBaseUrl();
 
 /** Retrieve the stored JWT token from the auth store. */
 function getToken(): string | null {
