@@ -269,8 +269,17 @@ def wipe_all_projects_direct() -> int:
             "oe_tasks_task",
             "oe_rfi_rfi",
         ):
+            # Table names are a hardcoded allowlist — no user input reaches here.
+            # Validate anyway so this pattern can't silently become injectable
+            # if the list ever grows to include a dynamic value.
+            _ALLOWED = {
+                "oe_bim_model", "oe_boq_boq", "oe_documents_document",
+                "oe_tasks_task", "oe_rfi_rfi",
+            }
+            if soft_table not in _ALLOWED:
+                raise ValueError(f"Refusing to DELETE from unlisted table: {soft_table!r}")
             try:
-                conn.execute(f"DELETE FROM {soft_table}")
+                conn.execute(f"DELETE FROM {soft_table}")  # noqa: S608 — table name allowlisted above
             except sqlite3.OperationalError:
                 pass  # table may not exist in all deployments
         conn.commit()

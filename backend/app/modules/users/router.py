@@ -27,7 +27,7 @@ from typing import Any
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 from pydantic import BaseModel
 
-from app.core.rate_limiter import client_identifier, login_limiter
+from app.core.rate_limiter import client_identifier, login_limiter, password_reset_limiter
 from app.dependencies import (
     CurrentUserId,
     RequirePermission,
@@ -152,7 +152,7 @@ async def forgot_password(
     The token is never included in the HTTP response.
     """
     client_ip = client_identifier(request)
-    allowed, _remaining = login_limiter.is_allowed(f"pwd_{client_ip}")
+    allowed, _remaining = password_reset_limiter.is_allowed(client_ip)
     if not allowed:
         raise HTTPException(
             status_code=status.HTTP_429_TOO_MANY_REQUESTS,
