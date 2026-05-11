@@ -348,6 +348,53 @@ async def _auto_backfill_vector_collections() -> None:
         logger.warning("Vector auto-backfill skipped: %s", exc)
 
 
+async def _seed_admin_from_env() -> None:
+    """Create an admin user from ADMIN_EMAIL/ADMIN_PASSWORD env vars.
+
+    Idempotent — safe to call on every startup. If the user already exists
+    with a different password, the password is reset to the env-var value
+    so a forgotten password can be recovered by redeploying.
+    """
+    admin_email = os.environ.get("ADMIN_EMAIL")
+    admin_password = os.environ.get("ADMIN_PASSWORD")
+    if not admin_email or not admin_password:
+        return
+
+    from sqlalchemy import select
+
+    from app.database import async_session_factory
+    from app.modules.users.models import User
+    from app.modules.users.service import hash_password
+
+    try:
+        async with async_session_factory() as session:
+            existing = (
+                await session.execute(select(User).where(User.email == admin_email))
+            ).scalar_one_or_none()
+            if existing is None:
+                session.add(
+                    User(
+                        id=uuid.uuid4(),
+                        email=admin_email,
+                        hashed_password=hash_password(admin_password),
+                        full_name=os.environ.get("ADMIN_NAME", "Administrator"),
+                        role="admin",
+                        locale="en",
+                        is_active=True,
+                        metadata_={},
+                    )
+                )
+                logger.info("Admin user created from env: %s", admin_email)
+            else:
+                existing.hashed_password = hash_password(admin_password)
+                existing.role = "admin"
+                existing.is_active = True
+                logger.info("Admin user updated from env: %s", admin_email)
+            await session.commit()
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("Admin seed from env skipped: %s", exc)
+
+
 async def _seed_demo_account() -> None:
     """Create demo user + 5 demo projects if they don't exist yet.
 
@@ -1372,6 +1419,9 @@ def create_app() -> FastAPI:
         from app.core.validation.rules import register_builtin_rules
 
         register_builtin_rules()
+
+        # Seed admin user from ADMIN_EMAIL/ADMIN_PASSWORD env vars (idempotent)
+        await _seed_admin_from_env()
 
         # Seed demo account + 3 demo projects (idempotent)
         _section("Demo data")
