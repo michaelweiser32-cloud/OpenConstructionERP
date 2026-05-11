@@ -1,4 +1,7 @@
 {
+  "plugins": [
+    "vercel/vercel-plugin"
+  ],
   "devDependencies": {
     "playwright": "^1.58.2"
   }
