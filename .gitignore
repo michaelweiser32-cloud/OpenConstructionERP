@@ -23,10 +23,10 @@ frontend/dist/
 .DS_Store
 Thumbs.db
 
-# Environment
-.env
-.env.local
-.env.production
+# Environment — root-level only (leading slash = repo root only, not subdirs)
+/.env
+/.env.local
+/.env.production
 
 # Database
 *.db
