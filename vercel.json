@@ -6,6 +6,11 @@
       "framework": "vite"
     }
   },
+  "build": {
+    "env": {
+      "VITE_API_URL": "https://openconstructionerp-production.up.railway.app/api"
+    }
+  },
   "rewrites": [
     {
       "source": "/api/:path*",
