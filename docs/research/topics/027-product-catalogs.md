@@ -26,10 +26,10 @@ Connects the estimating and procurement workflow to real manufacturer and distri
 
 ## Building blocks (free/open-source libs, APIs, MCP servers — each with a link and license/pricing note)
 - **`datanorm` (PyPI)**: Python reader for DATANORM 4. MIT, alpha, read-only. https://github.com/FahrJo/datanorm
-- **BMEcat**: an XML standard. The only maintained parser found is .NET (BMECat.net). For Python, write a small parser with stdlib `xml.etree`. https://github.com/stephanstapel/BMEcat.net (see NuGet listing)
+- **BMEcat**: an XML standard. The only maintained parser found is .NET (BMECat.net). For Python, write a small parser with stdlib `xml.etree`. https://packages.nuget.org/packages/BMECat.net (library is described as open source)
 - **ETIM classification and xChange (JSON)**: the model is under the Open Data Commons Attribution License, though national translations may be restricted to members. ETIM BMEcat 5.0 is announced as the last version, so prefer xChange. https://www.etim-international.com/classification/exchange-format/
 - **2BA Product Data OpenAPI**: OpenAPI 3.1 specification based on ETIM xChange. https://product-data-openapi.2ba.nl/
-- **buildingSMART Data Dictionary (bSDD)**: free REST API for classifications and properties, which a plain HTTP client can call. https://www.buildingsmart.org/users/services/buildingsmart-data-dictionary/
+- **buildingSMART Data Dictionary (bSDD)**: free REST API for classifications and properties, which a plain HTTP client can call. https://www.buildingsmart.org/?p=29545
 - **BIMobject Developer API**: access requires an application and approval. It is mostly aimed at manufacturers and embedding; no public pricing or endpoints are published. https://developer.bimobject.com
 - **EC3 / openEPD (Building Transparency)**: product-specific EPDs. API access is free for testing only; production use needs paid access and attribution. https://www.buildingtransparency.org/api-access-pricing/
 - **1build**: US live material, labor and equipment pricing through a GraphQL API. Commercial, with tier prices not published. https://www.ycombinator.com/launches/IQo-1build-plaid-for-construction-cost-data
@@ -47,7 +47,7 @@ Most small firms get prices from their wholesaler's catalog file, not from an AP
 - https://packages.nuget.org/packages/BMECat.net
 - https://www.etim-international.com/classification/exchange-format/
 - https://product-data-openapi.2ba.nl/
-- https://www.buildingsmart.org/users/services/buildingsmart-data-dictionary/
+- https://www.buildingsmart.org/?p=29545
 - https://pypi.org/project/bsdd/
 - https://www.buildingtransparency.org/api-access-pricing/
 - https://docs.buildingtransparency.org/ec3/api-and-integrations
