@@ -72,6 +72,10 @@ dependencies = [
     "trimesh>=4.0.0",
     # DWG/DXF parsing for 2D takeoff viewer
     "ezdxf>=0.18.0",
+    # Model Context Protocol SDK (official) for the /mcp endpoint. Pinned
+    # below 2.x, whose server API differs. The app starts without it; only
+    # the mcp_server module is skipped.
+    "mcp>=1.26.0,<2",
 ]
 
 [project.scripts]

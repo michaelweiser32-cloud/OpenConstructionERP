@@ -1395,6 +1395,15 @@ def create_app() -> FastAPI:
         except Exception:
             logger.debug("OpenCDE API router not available (non-fatal)")
 
+        # MCP endpoint at /mcp (module loader only mounts /api/v1/mcp_server).
+        # Optional: skipped when the `mcp` SDK is not installed.
+        try:
+            from app.modules.mcp_server.server import mount_mcp
+
+            mount_mcp(app)
+        except Exception:
+            logger.debug("MCP endpoint not available (non-fatal)", exc_info=True)
+
         # Variations alias (plan §3.3) — mount changeorders also at /api/v1/variations
         try:
             from app.modules.changeorders.router import router as co_router
@@ -1595,6 +1604,13 @@ def create_app() -> FastAPI:
             stop_sweeper()
         except Exception:
             logger.debug("collab lock sweeper stop failed", exc_info=True)
+
+        try:
+            from app.modules.mcp_server.server import unmount_mcp
+
+            await unmount_mcp(app)
+        except Exception:
+            logger.debug("MCP endpoint stop failed", exc_info=True)
 
         await engine.dispose()
 
