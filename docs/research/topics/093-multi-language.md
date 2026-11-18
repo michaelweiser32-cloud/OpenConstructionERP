@@ -66,13 +66,10 @@ The overall effort is **Medium**. It breaks into three phases.
 
 ## Sources
 - https://weblate.org/hosting/
-- https://weblate.org/try/
 - https://docs.tolgee.io/platform/integrations/mcp_server/about
 - https://tolgee.io/blog/localizing-a-react-app-with-the-tolgee-mcp-server
 - https://support.crowdin.com/developer/crowdin-mcp-server/
-- https://store.crowdin.com/crowdin-mcp-server
 - https://support.deepl.com/hc/en-us/articles/360021200939-DeepL-API-Free
 - https://github.com/LibreTranslate/LibreTranslate
 - https://github.com/i18next/i18next-cli
 - https://www.i18next.com/how-to/extracting-translations
-- https://github.com/STRML/i18next-parser
