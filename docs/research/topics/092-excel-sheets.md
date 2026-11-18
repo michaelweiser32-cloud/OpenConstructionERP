@@ -31,7 +31,6 @@ High value for small firms. Spreadsheets are their main tool, and subcontractors
 - MCP: `xing5/mcp-google-sheets` (MIT, Python, about 20 tools, service-account or OAuth). https://github.com/xing5/mcp-google-sheets
 - MCP: `taylorwilsdon/google_workspace_mcp` (MIT, Sheets plus Drive/Docs/Gmail). https://github.com/taylorwilsdon/google_workspace_mcp
 - No official Google-published Sheets MCP server could be verified. The two above are community projects.
-- Microsoft Graph Excel API (for OneDrive/SharePoint workbooks) is a possible later extension; not evaluated in depth here. https://learn.microsoft.com/en-us/graph/api/resources/excel
 
 ## Priority: 5/5 — spreadsheets are the lingua franca of small estimators; keyed round-trip plus templates removes the main migration barrier at moderate cost on existing openpyxl code.
 
@@ -43,4 +42,3 @@ High value for small firms. Spreadsheets are their main tool, and subcontractors
 - https://git.sheetjs.com/sheetjs/sheetjs/issues/3012
 - https://openpyxl.readthedocs.io/
 - https://github.com/burnash/gspread
-- https://learn.microsoft.com/en-us/graph/api/resources/excel
