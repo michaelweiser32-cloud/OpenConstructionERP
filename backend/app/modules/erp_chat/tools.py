@@ -619,7 +619,8 @@ async def handle_get_validation_results(
         except ToolAuthError as _te:
             return _auth_error(str(_te))
         repo = ValidationReportRepository(session)
-        reports, total = await repo.list_for_project(pid, limit=10)
+        reports = await repo.list_for_project(pid, limit=10)
+        total = len(reports)
         if not reports:
             return {
                 "renderer": "validation_dashboard",
@@ -867,7 +868,8 @@ async def handle_run_validation(
             return _auth_error(str(_te))
         repo = ValidationReportRepository(session)
         # Return the most recent validation reports
-        reports, total = await repo.list_for_project(pid, limit=5)
+        reports = await repo.list_for_project(pid, limit=5)
+        total = len(reports)
 
         if not reports:
             return {
