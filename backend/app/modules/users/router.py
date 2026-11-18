@@ -82,7 +82,18 @@ async def register(
     request: Request,
     service: UserService = Depends(_get_service),
 ) -> UserResponse:
-    """Register a new user account. Rate-limited per IP."""
+    """Register a new user account. Rate-limited per IP.
+
+    Disabled (403) unless self-registration is enabled — see
+    ``ALLOW_SELF_REGISTRATION`` (auto: open in development only).
+    """
+    from app.config import get_settings
+
+    if not get_settings().self_registration_enabled:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Self-registration is disabled on this server. Ask an administrator for an account.",
+        )
     client_ip = client_identifier(request)
     allowed, _remaining = login_limiter.is_allowed(f"reg_{client_ip}")
     if not allowed:

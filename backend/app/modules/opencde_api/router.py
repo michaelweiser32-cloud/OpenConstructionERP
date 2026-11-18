@@ -24,7 +24,7 @@ import uuid
 
 from fastapi import APIRouter, Depends
 
-from app.dependencies import CurrentUserId, OptionalUserPayload, SessionDep
+from app.dependencies import CurrentUserId, SessionDep
 from app.modules.opencde_api.schemas import (
     BCFComment,
     BCFCommentCreate,
@@ -107,7 +107,7 @@ async def foundation_current_user(
 
 @router.get("/bcf/3.0/projects/", response_model=list[BCFProject])
 async def bcf_list_projects(
-    user_payload: OptionalUserPayload,
+    _user_id: CurrentUserId,
     service: OpenCDEService = Depends(_get_service),
 ) -> list[BCFProject]:
     """List all projects in BCF format."""
@@ -117,7 +117,7 @@ async def bcf_list_projects(
 @router.get("/bcf/3.0/projects/{project_id}", response_model=BCFProject)
 async def bcf_get_project(
     project_id: uuid.UUID,
-    user_payload: OptionalUserPayload,
+    _user_id: CurrentUserId,
     service: OpenCDEService = Depends(_get_service),
 ) -> BCFProject:
     """Get a single project in BCF format."""
@@ -135,7 +135,7 @@ async def bcf_get_project(
 )
 async def bcf_list_topics(
     project_id: uuid.UUID,
-    user_payload: OptionalUserPayload,
+    _user_id: CurrentUserId,
     service: OpenCDEService = Depends(_get_service),
 ) -> list[BCFTopic]:
     """List BCF topics for a project."""
@@ -164,7 +164,7 @@ async def bcf_create_topic(
 async def bcf_get_topic(
     project_id: uuid.UUID,
     topic_guid: uuid.UUID,
-    user_payload: OptionalUserPayload,
+    _user_id: CurrentUserId,
     service: OpenCDEService = Depends(_get_service),
 ) -> BCFTopic:
     """Get a single BCF topic."""
@@ -198,7 +198,7 @@ async def bcf_update_topic(
 async def bcf_list_comments(
     project_id: uuid.UUID,
     topic_guid: uuid.UUID,
-    user_payload: OptionalUserPayload,
+    _user_id: CurrentUserId,
     service: OpenCDEService = Depends(_get_service),
 ) -> list[BCFComment]:
     """List BCF comments for a topic."""
@@ -235,7 +235,7 @@ async def bcf_create_comment(
 async def bcf_list_viewpoints(
     project_id: uuid.UUID,
     topic_guid: uuid.UUID,
-    user_payload: OptionalUserPayload,
+    _user_id: CurrentUserId,
     service: OpenCDEService = Depends(_get_service),
 ) -> list[BCFViewpoint]:
     """List BCF viewpoints for a topic."""

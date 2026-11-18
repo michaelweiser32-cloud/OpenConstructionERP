@@ -1,0 +1,101 @@
+# OpenConstructionERP — single-container image for free / small PaaS hosts
+#
+# Target: Render free web service (0.1 CPU, 512 MB RAM, ephemeral disk,
+# spins down after 15 min idle). Works the same on any Docker host.
+# See DEPLOY.md at the repo root for click-by-click instructions.
+#
+# Differences from Dockerfile.unified:
+#   * APP_ENV=production by default — no API docs, strict secret checks.
+#   * NO secret defaults baked in: JWT_SECRET must be supplied at deploy
+#     time (the entrypoint and the app both refuse to start without it).
+#   * Listens on 0.0.0.0:$PORT (default 8080) with proxy headers trusted,
+#     so HTTPS detection / HSTS work behind the platform's TLS proxy.
+#   * "Lite" runtime defaults for 512 MB: one worker, small DB pool,
+#     no vector backfill, no demo data, no cost-database preload (the
+#     CWICR cost databases are imported on demand from the UI).
+#   * All mutable state (SQLite DB, uploads, caches) lives under /data so
+#     a single persistent disk mounted there is the whole upgrade path.
+#
+# Build & run locally:
+#   docker build -t oce-render -f deploy/docker/Dockerfile.render .
+#   docker run --rm -p 8080:8080 -m 512m \
+#     -e JWT_SECRET="$(python3 -c 'import secrets;print(secrets.token_urlsafe(48))')" \
+#     -e ADMIN_EMAIL=admin@example.com -e ADMIN_PASSWORD='<strong password>' \
+#     oce-render
+#
+# SPDX-License-Identifier: AGPL-3.0-or-later
+# Upstream: https://github.com/datadrivenconstruction/OpenConstructionERP
+
+# ── Stage 1: Build frontend ──────────────────────────────────────────
+FROM node:22-alpine AS frontend-build
+
+WORKDIR /build
+COPY frontend/package.json frontend/package-lock.json ./
+RUN npm ci --ignore-scripts --no-audit --no-fund
+COPY frontend/ .
+# Same-origin API (/api) — the backend in stage 2 serves this bundle.
+ENV VITE_API_URL=""
+RUN npm run build
+
+# ── Stage 2: Runtime ─────────────────────────────────────────────────
+FROM python:3.12-slim
+
+# No apt packages needed: psycopg2-binary / asyncpg ship their own libpq /
+# protocol code, the healthcheck uses Python, and uvicorn handles SIGTERM
+# itself as PID 1 (exec'd by the entrypoint).
+
+RUN groupadd -r oe && useradd -r -g oe -d /data -s /sbin/nologin oe
+
+WORKDIR /app
+
+COPY backend/ backend/
+COPY --from=frontend-build /build/dist backend/app/_frontend_dist/
+
+# Base deps + PostgreSQL drivers only. Celery/Redis/boto3 and the heavy
+# vector / ML extras are deliberately left out to keep the image and RSS
+# small; install them in a derived image if you need them.
+# hatch force-includes ../frontend/dist; the app itself serves the copy in
+# backend/app/_frontend_dist (run with --app-dir), so an empty dir suffices.
+RUN mkdir -p /app/frontend/dist \
+    && pip install --no-cache-dir "./backend" "asyncpg>=0.30.0" "psycopg2-binary>=2.9.10"
+
+# Reference catalogs used by on-demand enrichment / demo data.
+COPY data/ data/
+
+COPY deploy/docker/render-entrypoint.sh /usr/local/bin/oe-entrypoint
+RUN chmod 0755 /usr/local/bin/oe-entrypoint \
+    && mkdir -p /data \
+    && chown -R oe:oe /data /app
+
+USER oe
+
+# Runtime defaults. NOTE: no JWT_SECRET / passwords here on purpose.
+ENV PYTHONUNBUFFERED=1 \
+    PYTHONDONTWRITEBYTECODE=1 \
+    MALLOC_ARENA_MAX=2 \
+    HOME=/data \
+    OE_DATA_DIR=/data \
+    PORT=8080 \
+    APP_ENV=production \
+    APP_DEBUG=false \
+    LOG_LEVEL=INFO \
+    SERVE_FRONTEND=true \
+    WEB_CONCURRENCY=1 \
+    DATABASE_POOL_SIZE=5 \
+    DATABASE_MAX_OVERFLOW=5 \
+    VECTOR_BACKEND=lancedb \
+    VECTOR_DATA_DIR=/data/vectors \
+    VECTOR_AUTO_BACKFILL=false \
+    REDIS_URL="" \
+    SEED_DEMO=false \
+    ALLOW_SELF_REGISTRATION=false \
+    ALLOW_FIRST_USER_ADMIN=false \
+    ALLOWED_HOSTS="*" \
+    CORS_ORIGIN_REGEX=none
+
+EXPOSE 8080
+
+HEALTHCHECK --interval=30s --timeout=5s --start-period=90s --retries=3 \
+    CMD python -c "import os,urllib.request;urllib.request.urlopen('http://127.0.0.1:%s/api/health' % os.environ.get('PORT','8080'),timeout=4)" || exit 1
+
+ENTRYPOINT ["/usr/local/bin/oe-entrypoint"]

@@ -1,0 +1,27 @@
+# Keep build contexts small and — above all — keep local secrets and
+# databases out of images. Applies to every Dockerfile built with the
+# repository root as context.
+.git
+**/.env
+**/.env.local
+**/.env.*.local
+**/node_modules
+**/__pycache__
+**/*.pyc
+**/.pytest_cache
+**/.ruff_cache
+**/.mypy_cache
+**/.venv
+**/venv
+**/*.db
+**/*.db-wal
+**/*.db-shm
+**/*.sqlite
+frontend/dist
+backend/app/_frontend_dist
+desktop
+website-marketing
+audit
+audit-archive
+docs/gifs
+docs/screenshots

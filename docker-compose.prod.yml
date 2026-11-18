@@ -39,6 +39,12 @@ services:
       S3_SECRET_KEY: ${S3_SECRET_KEY:-}
       S3_BUCKET: ${S3_BUCKET:-openestimate}
       QDRANT_URL: ${QDRANT_URL:-}
+      # Admin account (created/updated on boot). Required since public
+      # self-registration and first-user-admin are off in production.
+      ADMIN_EMAIL: ${ADMIN_EMAIL:-}
+      ADMIN_PASSWORD: ${ADMIN_PASSWORD:-}
+      ALLOW_SELF_REGISTRATION: ${ALLOW_SELF_REGISTRATION:-false}
+      DISABLE_DEMO_ACCOUNTS: ${DISABLE_DEMO_ACCOUNTS:-1}
     expose:
       - "8000"
     healthcheck:

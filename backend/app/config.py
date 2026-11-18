@@ -11,7 +11,7 @@ from importlib.metadata import version as _pkg_version
 from pathlib import Path
 from typing import Literal
 
-from pydantic import Field, computed_field
+from pydantic import Field, computed_field, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -120,6 +120,16 @@ class Settings(BaseSettings):
     # internal deployments via ``OE_DEFAULT_REGISTRATION_ROLE``. ``admin``
     # is intentionally unreachable through this setting.
     default_registration_role: Literal["viewer", "editor", "manager"] = "viewer"
+    # Public self-registration (``POST /api/v1/users/auth/register``).
+    # ``None`` = auto: open in ``development``, closed everywhere else, so an
+    # internet-facing deployment does not let strangers create accounts.
+    # Set ``ALLOW_SELF_REGISTRATION=true`` to open it explicitly.
+    allow_self_registration: bool | None = None
+    # "First registrant becomes admin" bootstrap. ``None`` = auto: enabled
+    # in ``development`` only. On a public URL the first visitor to hit
+    # /register would otherwise own the install — use ADMIN_EMAIL /
+    # ADMIN_PASSWORD to provision the admin instead.
+    allow_first_user_admin: bool | None = None
 
     # ── AI / Vector ──────────────────────────────────────────────────────
     vector_backend: str = "lancedb"  # "lancedb" (embedded, default) or "qdrant" (server)
@@ -212,11 +222,43 @@ class Settings(BaseSettings):
         description="Default validation rule sets applied to all projects",
     )
 
+    @model_validator(mode="after")
+    def _normalize_database_urls(self) -> "Settings":
+        """Accept provider connection strings (Neon, Render…) verbatim.
+
+        Rewrites ``postgres://…?sslmode=require&channel_binding=require``
+        into an asyncpg URL for ``database_url`` and a psycopg2 URL for
+        ``database_sync_url`` (derived from ``database_url`` when the sync
+        URL is unset or still SQLite). See ``app.core.db_url``.
+        """
+        from app.core.db_url import normalize_pair
+
+        self.database_url, self.database_sync_url = normalize_pair(
+            self.database_url, self.database_sync_url, sync_is_default=False
+        )
+        return self
+
     # ── Computed ─────────────────────────────────────────────────────────
     @computed_field  # type: ignore[prop-decorator]
     @property
     def is_production(self) -> bool:
         return self.app_env == "production"
+
+    @computed_field  # type: ignore[prop-decorator]
+    @property
+    def self_registration_enabled(self) -> bool:
+        """Whether anonymous users may self-register."""
+        if self.allow_self_registration is None:
+            return self.app_env == "development"
+        return self.allow_self_registration
+
+    @computed_field  # type: ignore[prop-decorator]
+    @property
+    def first_user_admin_enabled(self) -> bool:
+        """Whether the first self-registered user is promoted to admin."""
+        if self.allow_first_user_admin is None:
+            return self.app_env == "development"
+        return self.allow_first_user_admin
 
     @computed_field  # type: ignore[prop-decorator]
     @property
