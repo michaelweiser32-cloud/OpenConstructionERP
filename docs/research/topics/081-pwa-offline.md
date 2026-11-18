@@ -13,27 +13,24 @@ Lets the web app be installed on phones and tablets as a Progressive Web App and
 - `frontend/src/main.tsx` sets React Query `networkMode: 'offlineFirst'`.
 - `frontend/index.html` has a `theme-color` meta tag only.
 - `yjs` and `y-websocket` are already dependencies (`frontend/package.json`, `frontend/src/modules/collaboration/`).
-- Tests: `frontend/src/shared/lib/offlineStore.test.ts` and `frontend/e2e/v1.9/05-06-offline-query-behaviour.spec.ts`.
 
 **Gaps:**
 - There is no service worker or web app manifest, so a cold start offline fails and the app cannot be installed.
 - During replay, a **409 is treated as success and the mutation is deleted**. A real edit conflict is therefore dropped without notice.
 - Queued mutations carry no base version and no idempotency key, so a retried POST can create duplicates.
 - Expired cache entries are discarded even while the device is offline. There is no "make this project available offline" pinning.
-- The replay uses the bearer token that is current at replay time, and nothing handles a token that expired while offline.
 - Yjs documents have no local persistence (`y-indexeddb` is missing).
 - Nothing calls `navigator.storage.persist()`. Safari can evict script-writable storage after 7 days without user interaction, unless the app is installed to the home screen.
 
 ## Who it helps and how much
 - **Site managers and foremen** doing punch lists, field reports, inspections, safety checks and photos: high value. This is the main mobile use case, and connectivity on site is often poor.
 - **Estimators** reviewing a BOQ at a client meeting or while travelling: medium value. They mostly read, and occasionally edit.
-- **Office-only users**: low value, though they still get faster loads from the precached shell.
 
 For a small firm, "it works on my phone in the basement" is a deciding factor when choosing a tool. The silent data loss on a 409 is a trust problem as well as a missing feature.
 
 ## Implementation effort (Small/Medium/Large, module(s) touched, sketch of how it plugs into the module system)
 **Medium overall.** It splits into three steps:
-- **S: shell and installability.** Add `vite-plugin-pwa` (dev dependency, `generateSW`): precache the build, serve a `NetworkFirst` fallback for `/api` GETs, and generate a manifest with icons. Add an "update available" prompt.
+- **S: shell and installability.** Add `vite-plugin-pwa` (dev dependency, `generateSW`): precache the build, serve a `NetworkFirst` fallback for `/api` GETs, and generate a manifest with icons.
 - **M: safe sync.**
   - Add a `version` column (or use `updated_at`) on mutable entities: BOQ positions, punch items, field reports.
   - The backend accepts `If-Match` / `base_version` and returns 409 with the current server row.
@@ -51,24 +48,21 @@ For a small firm, "it works on my phone in the basement" is a deciding factor wh
 **Platform limit:** iOS Safari does not support the Background Sync API, so replay has to stay in the foreground (on app open or the `online` event) as the primary path. Workbox background sync is only an extra on Chromium.
 
 ## Building blocks (free/open-source libs, APIs, MCP servers — each with a link and license/pricing note)
-- **vite-plugin-pwa**: https://vite-pwa-org.netlify.app/ (MIT). Wraps Workbox `generateSW` / `injectManifest`.
-- **Workbox**: https://github.com/GoogleChrome/workbox (MIT). Precaching, runtime caching strategies, `workbox-background-sync`.
+- **vite-plugin-pwa**: https://vite-pwa-org.netlify.app/ (MIT). Wraps Workbox.
+- **Workbox**: https://github.com/GoogleChrome/workbox (MIT). Precaching, runtime caching, background sync.
 - **y-indexeddb**: https://github.com/yjs/y-indexeddb (MIT, from the Yjs org). Offline persistence for the Yjs docs already in use.
-- **Dexie.js**: https://github.com/dexie/Dexie.js (Apache-2.0). Optional, if the raw IndexedDB code becomes hard to maintain. Dexie Cloud is a separate paid product and not needed. Staying with raw IndexedDB fits the lightweight principle.
-- **Web platform APIs** (free): Service Worker, Cache API, StorageManager `persist()`, Background Sync (Chromium only).
-- **MCP servers:** none relevant. Offline sync is a client and protocol concern. I could not find a credible MCP server for it, and none is needed.
+- **Dexie.js**: https://github.com/dexie/Dexie.js (Apache-2.0). Optional, if the raw IndexedDB code becomes hard to maintain. Dexie Cloud is a separate paid product.
+- **MCP servers:** none relevant. Offline sync is a client and protocol concern. I found no credible MCP server for it.
 
 ## Priority: 4/5 — the plumbing is mostly there, but the 409 data-loss bug and the missing service worker block real use on site
 The IndexedDB cache and mutation queue already exist. A service worker, manifest, versioning with idempotency keys and a conflict UI would turn a fragile feature into a reliable mobile field tool for small contractors.
 
 ## Sources
 - https://vite-pwa-org.netlify.app/guide/service-worker-strategies-and-behaviors
-- https://vite-pwa-org.netlify.app/workbox/inject-manifest
 - https://github.com/GoogleChrome/workbox
 - https://caniuse.com/background-sync
 - https://developer.chrome.com/blog/background-sync
 - https://web.dev/articles/storage-for-the-web
-- https://web.dev/persistent-storage
 - https://docs.yjs.dev/getting-started/allowing-offline-editing
 - https://github.com/yjs/y-indexeddb
 - https://github.com/dexie/Dexie.js
