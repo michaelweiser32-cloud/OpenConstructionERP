@@ -30,7 +30,7 @@ In Germany every business has had to be able to *receive* e-invoices since 1 Jan
 
 ## Who it helps and how much
 
-- **German and DACH small contractors and subcontractors:** High value. The law forces the change by 2027/2028, and public clients already reject anything that is not XRechnung. Without it, invoices produced in the ERP have to be retyped into a separate tool.
+- **German and DACH small contractors and subcontractors:** High value. The law forces the change by 2027/2028, and public clients already reject anything that is not XRechnung.
 - **EU firms in other countries:** Medium-High. Belgium's B2B Peppol mandate started in 2026, France's is phasing in, and Peppol is the common rail across these countries.
 - **US/UK estimators:** Medium. Multi-currency and sales tax are useful for cross-border supply quotes, but e-invoicing is not mandatory for them yet.
 
@@ -53,14 +53,14 @@ The work splits into three modules:
   - Add per-line `tax_category` and an exemption reason.
   - Add a reverse-charge flag that is automatically suggested for construction subcontract invoices in DE, with human confirmation.
   - Add buyer reference (Leitweg-ID) and seller/buyer VAT IDs.
-- **Peppol:** a pluggable connector in `integrations` that hands the UBL file to a certified Access Point over its REST API. Self-hosting an Access Point requires certification by a Peppol Authority, which is not realistic for this project.
+- **Peppol:** a pluggable connector in `integrations` that hands the UBL file to a certified Access Point over its REST API.
 
 ## Building blocks (free/open-source libs, APIs, MCP servers — each with a link and license/pricing note)
 
 - **factur-x** (Akretion, Python): generates, extracts and XSD-checks Factur-X/ZUGFeRD PDFs. Licensed BSD-style; one listing says "Non-SPDX", so check the LICENSE file. https://github.com/akretion/factur-x
 - **python-drafthorse** (pretix): generates and parses the ZUGFeRD 2.3 / CII XML model. Apache-2.0 (bundled FeRD schemas are under their own terms). https://github.com/pretix/python-drafthorse
 - **KoSIT validator** plus **validator-configuration-xrechnung**: the official XRechnung and EN 16931 validation. Java, Apache-2.0. https://github.com/itplr-kosit/validator
-- **Mustangproject**: Java library, validator and CLI for ZUGFeRD/Factur-X/XRechnung. Apache-2.0. A good fallback validator as a sidecar. https://github.com/ZUGFeRD/mustangproject
+- **Mustangproject**: Java library, validator and CLI for ZUGFeRD/Factur-X/XRechnung. Apache-2.0. https://github.com/ZUGFeRD/mustangproject
 - **ECB reference rates**: already integrated. Free.
 - **Peppol Access Points with APIs**: these are commercial. Qvalia publishes plans from roughly EUR 9 to 899 per month, with the API from its mid tier. Others (Digiteal, Dokapi) do not publish prices. No free open-source Access Point is viable for production.
 - **MCP servers (early, not vetted):**
@@ -68,7 +68,7 @@ The work splits into three modules:
   - `e-invoice-mcp` from Fintom8 (MIT, but it proxies to a hosted API).
   - The `mcp-einvoicing-*` family (Belgium, Germany, France, Italy), which has very low adoption.
 
-  None is mature enough to depend on. Exposing our own `einvoice` tools through `erp_chat/tools.py` is the safer route.
+  None is mature enough to depend on; expose our own `einvoice` tools via `erp_chat/tools.py` instead.
 
 ## Priority: 5/5 — legally mandated in Germany (issue by 2027/2028, receive since 2025) with a clear gap on top of existing finance/tax/currency foundations and mature Apache/BSD building blocks.
 
