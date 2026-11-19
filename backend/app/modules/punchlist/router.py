@@ -19,6 +19,7 @@ from pathlib import Path
 from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile, status
 from fastapi.responses import Response
 
+from app.core.file_areas import FileArea
 from app.dependencies import CurrentUserId, RequirePermission, SessionDep, verify_project_access
 from app.modules.documents.service import MAX_PHOTO_SIZE
 from app.modules.punchlist.schemas import (
@@ -34,8 +35,23 @@ from app.modules.punchlist.service import PunchListService
 router = APIRouter()
 logger = logging.getLogger(__name__)
 
-# Directory for storing uploaded punch list photos
+# Directory for storing uploaded punch list photos (relative to the CWD, as
+# before). PUNCH_PHOTOS_AREA stores them on that disk path or in the S3
+# bucket depending on STORAGE_BACKEND.
 PHOTOS_DIR = Path("uploads/punchlist/photos")
+PUNCH_PHOTOS_AREA = FileArea("punchlist_photos", lambda: PHOTOS_DIR)
+# Prefix of the relative paths stored in PunchItem.photos.
+_PHOTO_REF_PREFIX = "punchlist/photos/"
+
+
+def _photo_path_from_ref(ref: str) -> Path | None:
+    """Map a stored ``punchlist/photos/<file>`` reference to its file path."""
+    if not ref.startswith(_PHOTO_REF_PREFIX):
+        return None
+    name = ref[len(_PHOTO_REF_PREFIX) :]
+    if not name or "/" in name or "\\" in name or name in (".", ".."):
+        return None
+    return PHOTOS_DIR / name
 
 
 def _get_service(session: SessionDep) -> PunchListService:
@@ -271,9 +287,6 @@ async def upload_photo(
             detail=f"Unsupported file type: {file.content_type}. Allowed: {', '.join(allowed_types)}",
         )
 
-    # Ensure upload directory exists
-    PHOTOS_DIR.mkdir(parents=True, exist_ok=True)
-
     # Generate unique filename
     ext = Path(file.filename or "photo.jpg").suffix or ".jpg"
     filename = f"{item_id}_{uuid.uuid4().hex[:8]}{ext}"
@@ -296,7 +309,7 @@ async def upload_photo(
         )
 
     try:
-        filepath.write_bytes(content)
+        await PUNCH_PHOTOS_AREA.write(filepath, content)
     except Exception:
         logger.exception("Unable to save photo for punch item %s", item_id)
         raise HTTPException(
@@ -347,8 +360,17 @@ async def remove_photo(
     _perm: None = Depends(RequirePermission("punchlist.update")),
     service: PunchListService = Depends(_get_service),
 ) -> None:
-    """Remove a photo by index from a punch item."""
-    await service.remove_photo(item_id, index)
+    """Remove a photo by index from a punch item and delete its stored file."""
+    item = await service.get_item(item_id)
+    photos = list(item.photos or [])  # type: ignore[attr-defined]
+    removed_ref = photos[index] if 0 <= index < len(photos) else None
+    await service.remove_photo(item_id, index)  # validates index, updates DB
+    photo_path = _photo_path_from_ref(str(removed_ref)) if removed_ref else None
+    if photo_path is not None:
+        try:
+            await PUNCH_PHOTOS_AREA.delete(photo_path)
+        except Exception:
+            logger.warning("Failed to delete punch photo file %s", photo_path)
 
 
 # ── PDF Export ───────────────────────────────────────────────────────────────

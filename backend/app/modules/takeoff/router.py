@@ -42,7 +42,7 @@ from statistics import mean as _mean
 from typing import Any
 
 from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile, status
-from fastapi.responses import FileResponse, StreamingResponse
+from fastapi.responses import Response, StreamingResponse
 from pydantic import BaseModel, Field
 from sqlalchemy import delete, select
 
@@ -2382,8 +2382,8 @@ async def extract_tables(
 async def download_document(
     doc_id: str,
     service: TakeoffService = Depends(_get_service),
-) -> FileResponse:
-    """Download the stored PDF file for a takeoff document."""
+) -> Response:
+    """Download the stored PDF file (from local disk or the S3 bucket)."""
     doc = await service.get_document(doc_id)
     if doc is None:
         raise HTTPException(status_code=404, detail="Document not found")
@@ -2398,11 +2398,17 @@ async def download_document(
     if not str(file_path).startswith(str(allowed_base)):
         raise HTTPException(status_code=403, detail="Access denied")
 
-    if not file_path.exists() or file_path.is_symlink():
+    from app.modules.takeoff.service import TAKEOFF_AREA
+
+    if TAKEOFF_AREA.is_remote:
+        missing = file_path.is_symlink() or not await TAKEOFF_AREA.exists(file_path)
+    else:
+        missing = not file_path.exists() or file_path.is_symlink()
+    if missing:
         raise HTTPException(status_code=404, detail="PDF file not found on disk")
 
-    return FileResponse(
-        path=str(file_path),
+    return await TAKEOFF_AREA.response(
+        file_path,
         media_type="application/pdf",
         filename=doc.filename,
     )

@@ -61,7 +61,7 @@ Contents
 
 **What survives what**
 
-| Event | Data in Neon (projects, BOQs, users…) | Files on local disk (`STORAGE_BACKEND=local`) | BIM/CAD files in an S3 bucket (`STORAGE_BACKEND=s3`) |
+| Event | Data in Neon (projects, BOQs, users…) | Files on local disk (`STORAGE_BACKEND=local`) | Files in an S3 bucket (`STORAGE_BACKEND=s3`) |
 |---|---|---|---|
 | Render spin-down / wake-up | ✅ kept | ❌ lost | ✅ kept |
 | Redeploy / restart | ✅ kept | ❌ lost | ✅ kept |
@@ -70,12 +70,13 @@ Contents
 ### Known limitation: uploaded files
 
 Projects, BOQs, cost data, schedules, tasks and users are durable in
-Neon. For **files**, read [§5](#5-durable-file-storage-s3-compatible-bucket):
-an S3 bucket makes **BIM/CAD model files** durable today, while
-**documents, photos, takeoff PDFs, DWG drawings, meeting transcripts and
-punch-list photos** are still written to the local disk and are lost on
-restart even with a bucket configured. Until that is wired up, treat the
-free deployment as "structured data + BIM models".
+Neon. **Uploaded files** are durable only with an S3-compatible bucket
+([§5](#5-durable-file-storage-s3-compatible-bucket)): with
+`STORAGE_BACKEND=s3`, every upload type (documents, photos, PDF sheets,
+meeting transcripts, takeoff PDFs, DWG/DXF drawings, punch-list photos and
+BIM/CAD models) is stored in the bucket. Without a bucket, uploads are lost
+on every restart. The one derived file still on local disk is the BIM
+element table used by the BIM "data query" view (see §5).
 
 ---
 
@@ -198,15 +199,21 @@ server you run yourself, …). The Render image ships the S3 client
 
 **What it covers today** (be precise about this before relying on it):
 
-| Upload type | Goes to the bucket with `STORAGE_BACKEND=s3`? |
-|---|---|
-| BIM/CAD models: geometry (`.glb` / `.dae` / `.gltf`) and the original upload (`.ifc`, `.rvt`, …) | ✅ yes |
-| Documents, photos and photo thumbnails, PDF sheet thumbnails | ❌ not yet — local disk (`/data/.openestimator/…`) |
-| Takeoff PDFs, DWG/DXF drawings, meeting transcripts, punch-list photos | ❌ not yet — local disk |
-| BIM element property tables (`elements.parquet`) | ❌ not yet — local disk; rebuilt by re-uploading the model |
+| Upload type | With `STORAGE_BACKEND=s3` | Bucket key | Local path with `STORAGE_BACKEND=local` (Render image) |
+|---|---|---|---|
+| Documents (incl. PDFs split into sheets) | ✅ bucket | `uploads/<project>/<file>` | `/data/.openestimator/uploads/<project>/` |
+| Meeting transcripts (filed as documents) | ✅ bucket | `uploads/<project>/<file>` | same as documents |
+| Photos and their thumbnails | ✅ bucket | `photos/<project>/…`, `photos/thumbs/<project>/…` | `/data/.openestimator/photos/` |
+| PDF sheet page thumbnails | ✅ bucket | `sheets/<project>/…` | `/data/.openestimator/sheets/` |
+| Takeoff PDFs | ✅ bucket | `takeoff_documents/<id>.pdf` | `/data/.openestimator/takeoff_documents/` |
+| DWG/DXF drawings + parsed entities + SVG thumbnail | ✅ bucket | `dwg_uploads/…`, `dwg_entities/<id>/…`, `dwg_thumbnails/<id>/…` | `/app/data/dwg_uploads/`, `dwg_entities/`, `dwg_thumbnails/` |
+| Punch-list photos | ✅ bucket | `punchlist_photos/<file>` | `/app/uploads/punchlist/photos/` |
+| BIM/CAD models: geometry + original upload | ✅ bucket | `bim/<project>/<model>/…` | `/app/data/bim/` |
+| BIM element table (`elements.parquet`, for the BIM data-query view) | ❌ local disk | — | `/app/data/bim/` (written when the model is uploaded) |
 
-Moving the remaining upload types onto the same storage layer is the next
-follow-up (listed in the pull request).
+Downloads always go **through the app** (same routes, same permission and
+path checks as before); on S3 the app streams the bytes from the bucket.
+With `STORAGE_BACKEND=local` everything stays exactly where it was.
 
 ### Settings
 
@@ -251,8 +258,14 @@ Leave `STORAGE_BACKEND=local` and the `S3_*` values empty for a demo
 
 Switching from `local` to `s3` does not copy existing files. On Render
 free there is nothing to copy (the disk was already wiped). On a VPS,
-copy `/app/data/bim/` into the bucket under the same `bim/…` keys
-(e.g. with `aws s3 sync` or `rclone`) before switching.
+copy each local directory from the table above into the bucket under its
+key prefix before switching (e.g. `rclone copy
+/data/.openestimator/uploads remote:<bucket>/uploads`, and likewise
+`photos`, `sheets`, `takeoff_documents`, `/app/data/dwg_uploads` →
+`dwg_uploads`, `/app/data/dwg_entities` → `dwg_entities`,
+`/app/data/dwg_thumbnails` → `dwg_thumbnails`,
+`/app/uploads/punchlist/photos` → `punchlist_photos`, `/app/data/bim` →
+`bim`). The database keeps the same paths, so nothing else changes.
 
 ---
 
@@ -281,7 +294,7 @@ default baked into `deploy/docker/Dockerfile.render`.
 | `WEB_CONCURRENCY` | no | `1` | Uvicorn workers. Keep `1` on 512 MB. |
 | `DATABASE_POOL_SIZE` / `DATABASE_MAX_OVERFLOW` | no | `5` / `5` | PostgreSQL pool. |
 | `LOGIN_RATE_LIMIT` / `API_RATE_LIMIT` / `AI_RATE_LIMIT` | no | `50` / `300` / `30` per minute | Rate limits (per client IP / user). |
-| `STORAGE_BACKEND` | no | `local` | `s3` = BIM/CAD files in an S3-compatible bucket; see [§5](#5-durable-file-storage-s3-compatible-bucket). |
+| `STORAGE_BACKEND` | no | `local` | `s3` = all uploaded files in an S3-compatible bucket; see [§5](#5-durable-file-storage-s3-compatible-bucket). |
 | `S3_ENDPOINT` / `S3_ACCESS_KEY` / `S3_SECRET_KEY` / `S3_BUCKET` / `S3_REGION` | when `s3` | — | Bucket connection; startup fails if unreachable. |
 | `S3_PRESIGNED_DOWNLOADS` | no | `false` | Redirect geometry downloads to presigned bucket URLs (needs bucket CORS + CSP change). |
 | `OE_SKIP_MIGRATIONS` | no | `0` | `1` skips the boot-time migration step. |
@@ -340,10 +353,11 @@ When the free tier is not enough, in rough order of effort:
 
 1. **Render Starter (~$7/month)** — no spin-down, more RAM options, and you
    can attach a **persistent disk**: service → **Disks** → mount path
-   `/data`. Document/photo uploads, caches and SQLite (if used) live there
-   because the image sets `HOME=/data`; BIM/CAD files on the local backend
-   live in `/app/data/bim`, so use `STORAGE_BACKEND=s3` for those (or mount
-   a second disk there). Keep Neon for the database or move to a paid
+   `/data`. Document/photo/sheet/takeoff uploads, caches and SQLite (if
+   used) live there because the image sets `HOME=/data`; DWG drawings,
+   punch-list photos and BIM/CAD files on the local backend live under
+   `/app/…` (table in §5), so `STORAGE_BACKEND=s3` is the simpler way to
+   make every upload durable. Keep Neon for the database or move to a paid
    Render Postgres.
 2. **Small VPS + Docker Compose** (any provider, a few $/month): use
    `docker-compose.prod.yml` (bundled PostgreSQL, see [§10](#10-run-it-locally--on-a-vps-with-bundled-postgresql))
@@ -353,7 +367,7 @@ When the free tier is not enough, in rough order of effort:
    sign-up **requires a credit card** for identity verification.
 4. **Object storage for uploads** — `STORAGE_BACKEND=s3` with any
    S3-compatible bucket ([§5](#5-durable-file-storage-s3-compatible-bucket)).
-   Covers BIM/CAD files today; the other upload types are a follow-up.
+   Covers every upload type (§5 table).
 5. **Bigger Neon plan** if you outgrow 1 GB / 100 CU-hours.
 
 ---
@@ -440,8 +454,11 @@ What this setup enforces:
 - [x] CORS: no wildcard; no blanket `*.vercel.app` regex outside dev.
 - [x] Optional Host allowlist (`ALLOWED_HOSTS`).
 - [x] S3 file storage (when enabled) keeps the bucket private: no public
-      ACLs, files streamed through authenticated routes, presigned URLs
-      opt-in only; startup fails on a missing `aioboto3` or unreachable bucket.
+      ACLs, files streamed through the app's own routes (same checks as
+      local disk), presigned URLs opt-in only; startup fails on a missing
+      `aioboto3` or unreachable bucket. Note: the photo file/thumbnail
+      routes themselves are still reachable without login (by photo UUID)
+      — see the follow-up list.
 - [x] Previously unauthenticated read endpoints (BCF/OpenCDE project &
       topic listings, team listings, CDE stats) now require login.
 
@@ -464,5 +481,5 @@ tokens) and decide whether those matter for your use.
 | Instance restarted with "out of memory" | A big import exceeded 512 MB; import smaller chunks or upgrade the instance. |
 | `FATAL: STORAGE_BACKEND=s3 but the 'aioboto3' package is not installed` | You are not using `Dockerfile.render`; install `aioboto3>=12.0.0` or set `STORAGE_BACKEND=local`. |
 | `FATAL: S3 bucket '…' is not reachable` | Check `S3_ENDPOINT` (full `https://…` URL), `S3_REGION`, `S3_BUCKET` and that the key may access that bucket. |
-| Uploaded documents/photos gone after a restart | Expected on Render free: those upload types are not on S3 yet ([§5](#5-durable-file-storage-s3-compatible-bucket)). |
+| Uploaded files gone after a restart | `STORAGE_BACKEND` is still `local` on an ephemeral disk — configure a bucket ([§5](#5-durable-file-storage-s3-compatible-bucket)). |
 | First request is slow | Render free spin-down (≈1 min wake-up). Expected. |

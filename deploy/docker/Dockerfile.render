@@ -13,9 +13,10 @@
 #   * "Lite" runtime defaults for 512 MB: one worker, small DB pool,
 #     no vector backfill, no demo data, no cost-database preload (the
 #     CWICR cost databases are imported on demand from the UI).
-#   * Mutable state (SQLite DB, document/photo uploads, caches) lives under
-#     /data (HOME=/data). Exception: with STORAGE_BACKEND=local, BIM/CAD
-#     blobs go to /app/data/bim — use STORAGE_BACKEND=s3 for durable files.
+#   * Mutable state (SQLite DB, document/photo/takeoff uploads, caches)
+#     lives under /data (HOME=/data); with STORAGE_BACKEND=local, DWG,
+#     punch-list and BIM/CAD files go under /app. Set STORAGE_BACKEND=s3 to
+#     keep every uploaded file in a bucket (see DEPLOY.md §5).
 #
 # Build & run locally:
 #   docker build -t oce-render -f deploy/docker/Dockerfile.render .

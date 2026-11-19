@@ -12,11 +12,13 @@ import json
 import logging
 import os
 import uuid
+from pathlib import Path
 from typing import Any
 
 from fastapi import HTTPException, UploadFile, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.file_areas import FileArea
 from app.modules.dwg_takeoff.models import (
     DwgAnnotation,
     DwgDrawing,
@@ -112,6 +114,24 @@ def _normalize_entity(raw: dict[str, Any], index: int) -> dict[str, Any]:
     return result
 
 
+def _data_base() -> str:
+    """Root of the DWG data directories (``$DATA_DIR`` or ``<cwd>/data``)."""
+    return os.environ.get("DATA_DIR", os.path.join(os.getcwd(), "data"))
+
+
+# Storage areas — same directories as before on the local backend; the S3
+# bucket (keys dwg_uploads/…, dwg_entities/…, dwg_thumbnails/…) when
+# STORAGE_BACKEND=s3. Roots are evaluated per call, like the old inline code.
+DWG_UPLOADS_AREA = FileArea("dwg_uploads", lambda: Path(_data_base()) / "dwg_uploads")
+DWG_ENTITIES_AREA = FileArea("dwg_entities", lambda: Path(_data_base()) / "dwg_entities")
+DWG_THUMBS_AREA = FileArea("dwg_thumbnails", lambda: Path(_data_base()) / "dwg_thumbnails")
+
+
+def _area_path(area: FileArea, key: str) -> Path:
+    """Historical ``os.path.join(<dir>, key)`` — absolute legacy keys win."""
+    return Path(os.path.join(str(area.root), key))
+
+
 def _get_upload_dir() -> str:
     """Get the upload directory for DWG files."""
     base = os.environ.get("DATA_DIR", os.path.join(os.getcwd(), "data"))
@@ -128,33 +148,18 @@ def _get_entities_dir() -> str:
     return entities_dir
 
 
-def _process_dxf_sync(file_path: str, entities_key: str, thumbnail_key: str) -> dict[str, Any]:
-    """Synchronous DXF processing — runs in a thread via asyncio.to_thread.
+def _parse_dxf_sync(file_path: str) -> tuple[dict[str, Any], str]:
+    """Synchronous DXF parsing — runs in a thread via asyncio.to_thread.
 
-    Parses the DXF file, saves entities JSON, and generates SVG thumbnail.
-    Returns a dict with parse results and storage keys.
+    ezdxf needs a real file, so ``file_path`` is a local path (the stored
+    upload itself on the local backend, a temporary copy on S3). Returns
+    the parse result and the SVG thumbnail; the caller stores both.
     """
     from app.modules.dwg_takeoff.dxf_processor import generate_svg_thumbnail, parse_dxf
 
     result = parse_dxf(file_path)
-
-    # Save entities JSON to disk
-    entities_path = os.path.join(_get_entities_dir(), entities_key)
-    os.makedirs(os.path.dirname(entities_path), exist_ok=True)
-    with open(entities_path, "w", encoding="utf-8") as f:
-        json.dump(result["entities"], f)
-
-    # Generate and save SVG thumbnail
     svg_content = generate_svg_thumbnail(file_path)
-    thumb_dir = os.path.join(
-        os.environ.get("DATA_DIR", os.path.join(os.getcwd(), "data")), "dwg_thumbnails"
-    )
-    thumb_path = os.path.join(thumb_dir, thumbnail_key)
-    os.makedirs(os.path.dirname(thumb_path), exist_ok=True)
-    with open(thumb_path, "w", encoding="utf-8") as f:
-        f.write(svg_content)
-
-    return result
+    return result, svg_content
 
 
 class DwgTakeoffService:
@@ -195,10 +200,9 @@ class DwgTakeoffService:
         content = await file.read()
         size_bytes = len(content)
 
-        # Create drawing record FIRST (before writing file to disk)
-        upload_dir = _get_upload_dir()
+        # Create drawing record FIRST (before storing the file)
         file_id = str(uuid.uuid4())
-        file_path = os.path.join(upload_dir, f"{file_id}{ext}")
+        file_path = str(DWG_UPLOADS_AREA.path_for(f"{file_id}{ext}"))
 
         drawing = DwgDrawing(
             project_id=project_id,
@@ -216,10 +220,9 @@ class DwgTakeoffService:
         drawing = await self.drawing_repo.create(drawing)
         drawing_id = drawing.id
 
-        # Save file to disk AFTER DB record exists; clean up on failure
+        # Store the file AFTER the DB record exists; clean up on failure
         try:
-            with open(file_path, "wb") as f:
-                f.write(content)
+            await DWG_UPLOADS_AREA.write(file_path, content)
         except Exception:
             await self.drawing_repo.delete(drawing_id)
             raise
@@ -284,8 +287,15 @@ class DwgTakeoffService:
         thumbnail_key = f"{drawing_id}/thumbnail.svg"
 
         try:
-            result = await asyncio.to_thread(
-                _process_dxf_sync, file_path, entities_key, thumbnail_key
+            async with DWG_UPLOADS_AREA.local_copy(file_path) as local_path:
+                result, svg_content = await asyncio.to_thread(_parse_dxf_sync, str(local_path))
+            await DWG_ENTITIES_AREA.write(
+                _area_path(DWG_ENTITIES_AREA, entities_key),
+                json.dumps(result["entities"]).encode("utf-8"),
+            )
+            await DWG_THUMBS_AREA.write(
+                _area_path(DWG_THUMBS_AREA, thumbnail_key),
+                svg_content.encode("utf-8"),
             )
 
             # Create drawing version
@@ -355,15 +365,32 @@ class DwgTakeoffService:
 
         await self.drawing_repo.update_fields(drawing_id, status="processing")
 
+        # The converter needs a real file: the stored upload on the local
+        # backend, a temporary copy (deleted afterwards) on S3.
+        try:
+            async with DWG_UPLOADS_AREA.local_copy(file_path) as local_path:
+                await self._convert_and_store_dwg(drawing_id, str(local_path), converter)
+        except FileNotFoundError:
+            await self.drawing_repo.update_fields(
+                drawing_id, status="error",
+                error_message="Uploaded DWG file is missing from storage",
+            )
+
+    async def _convert_and_store_dwg(
+        self,
+        drawing_id: uuid.UUID,
+        file_path: str,
+        converter: Path,
+    ) -> None:
+        """Run DDC DwgExporter on a local ``file_path`` and store the entities."""
         import subprocess
-        from pathlib import Path as _Path
 
         # DDC DwgExporter → Excel (dispatched by output file extension)
         xlsx_path = file_path.rsplit(".", 1)[0] + "_dwg.xlsx"
         try:
             proc = await asyncio.to_thread(
                 lambda: subprocess.run(
-                    [str(converter), str(_Path(file_path).resolve()), str(_Path(xlsx_path).resolve()), "-no-collada"],
+                    [str(converter), str(Path(file_path).resolve()), str(Path(xlsx_path).resolve()), "-no-collada"],
                     stdout=subprocess.PIPE,
                     stderr=subprocess.PIPE,
                     cwd=str(converter.parent),
@@ -405,12 +432,13 @@ class DwgTakeoffService:
                 )
                 return
 
-            # Store entities JSON
+            # Store entities JSON in the entities area (same key layout as
+            # the DXF path: <drawing_id>/entities.json).
             entities_key = f"{drawing_id}/entities.json"
-            entities_path = os.path.join(os.path.dirname(file_path), f"{drawing_id}_entities.json")
-            import json
-            with open(entities_path, "w", encoding="utf-8") as f:
-                json.dump(result["entities"], f)
+            await DWG_ENTITIES_AREA.write(
+                _area_path(DWG_ENTITIES_AREA, entities_key),
+                json.dumps(result["entities"]).encode("utf-8"),
+            )
 
             # Create drawing version
             version_number = await self.version_repo.get_next_version_number(drawing_id)
@@ -418,7 +446,7 @@ class DwgTakeoffService:
                 drawing_id=drawing_id,
                 version_number=version_number,
                 layers=result["layers"],
-                entities_key=entities_path,
+                entities_key=entities_key,
                 entity_count=result["entity_count"],
                 extents=result["extents"],
                 units=result.get("units", "unitless"),
@@ -500,35 +528,29 @@ class DwgTakeoffService:
         drawing = await self.get_drawing(drawing_id)
 
         # Remove the uploaded drawing file
-        if drawing.file_path and os.path.exists(drawing.file_path):
+        if drawing.file_path:
             try:
-                os.remove(drawing.file_path)
-            except OSError:
+                await DWG_UPLOADS_AREA.delete(drawing.file_path)
+            except Exception:
                 logger.warning("Could not delete file: %s", drawing.file_path)
 
-        # Remove entities and thumbnail files for all versions
+        # Remove entities files for all versions
         versions = await self.version_repo.list_for_drawing(drawing_id)
-        entities_dir = _get_entities_dir()
-        thumb_dir = os.path.join(
-            os.environ.get("DATA_DIR", os.path.join(os.getcwd(), "data")), "dwg_thumbnails"
-        )
         for version in versions:
             if version.entities_key:
-                ent_path = os.path.join(entities_dir, version.entities_key)
-                if os.path.exists(ent_path):
-                    try:
-                        os.remove(ent_path)
-                    except OSError:
-                        logger.warning("Could not delete entities file: %s", ent_path)
+                ent_path = _area_path(DWG_ENTITIES_AREA, version.entities_key)
+                try:
+                    await DWG_ENTITIES_AREA.delete(ent_path)
+                except Exception:
+                    logger.warning("Could not delete entities file: %s", ent_path)
 
         # Remove thumbnail file referenced by the drawing
         if drawing.thumbnail_key:
-            thumb_path = os.path.join(thumb_dir, drawing.thumbnail_key)
-            if os.path.exists(thumb_path):
-                try:
-                    os.remove(thumb_path)
-                except OSError:
-                    logger.warning("Could not delete thumbnail file: %s", thumb_path)
+            thumb_path = _area_path(DWG_THUMBS_AREA, drawing.thumbnail_key)
+            try:
+                await DWG_THUMBS_AREA.delete(thumb_path)
+            except Exception:
+                logger.warning("Could not delete thumbnail file: %s", thumb_path)
 
         await self.drawing_repo.delete(drawing_id)
         logger.info("Drawing deleted: %s", drawing_id)
@@ -550,13 +572,9 @@ class DwgTakeoffService:
         if version is None or version.entities_key is None:
             return []
 
-        entities_path = os.path.join(_get_entities_dir(), version.entities_key)
-        if not os.path.exists(entities_path):
-            return []
-
+        entities_path = _area_path(DWG_ENTITIES_AREA, version.entities_key)
         try:
-            with open(entities_path, encoding="utf-8") as f:
-                entities = json.load(f)
+            entities = json.loads((await DWG_ENTITIES_AREA.read(entities_path)).decode("utf-8"))
         except FileNotFoundError:
             logger.warning("Entities file missing for drawing %s: %s", drawing_id, entities_path)
             return []
@@ -585,16 +603,11 @@ class DwgTakeoffService:
         if not drawing.thumbnail_key:
             return None
 
-        thumb_dir = os.path.join(
-            os.environ.get("DATA_DIR", os.path.join(os.getcwd(), "data")), "dwg_thumbnails"
-        )
-        thumb_path = os.path.join(thumb_dir, drawing.thumbnail_key)
-        if not os.path.exists(thumb_path):
-            return None
-
+        thumb_path = _area_path(DWG_THUMBS_AREA, drawing.thumbnail_key)
         try:
-            with open(thumb_path, encoding="utf-8") as f:
-                return f.read()
+            return (await DWG_THUMBS_AREA.read(thumb_path)).decode("utf-8")
+        except FileNotFoundError:
+            return None
         except Exception:
             logger.exception("Failed to load thumbnail for drawing %s", drawing_id)
             return None

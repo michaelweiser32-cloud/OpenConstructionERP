@@ -25,6 +25,7 @@ from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.file_areas import FileArea, find_area
 from app.modules.bim_hub.models import BIMElement
 from app.modules.documents.models import Document, DocumentBIMLink, ProjectPhoto, Sheet
 from app.modules.documents.repository import DocumentRepository, PhotoRepository, SheetRepository
@@ -50,6 +51,13 @@ PHOTO_THUMB_BASE = Path.home() / ".openestimator" / "photos" / "thumbs"
 # grid view and keeps the thumbnail under ~60 kB for typical JPEGs.
 PHOTO_THUMB_MAX_SIDE = 512
 PHOTO_THUMB_QUALITY = 82
+
+# Storage areas — the DB keeps storing the local-style paths built from the
+# *_BASE constants above; the areas decide whether the bytes live on local
+# disk (STORAGE_BACKEND=local) or in the S3 bucket (STORAGE_BACKEND=s3).
+# The lambdas read the module constants at call time.
+UPLOADS_AREA = FileArea("uploads", lambda: UPLOAD_BASE)
+PHOTOS_AREA = FileArea("photos", lambda: PHOTO_BASE)  # originals + thumbs/
 
 # Security constants
 MAX_FILE_SIZE = 100 * 1024 * 1024  # 100MB
@@ -80,15 +88,12 @@ def _sanitize_filename(name: str) -> str:
     return name
 
 
-def _generate_photo_thumbnail(
-    source_bytes: bytes,
-    dest_path: Path,
-) -> bool:
-    """Write a JPEG thumbnail of ``source_bytes`` to ``dest_path``.
+def _render_photo_thumbnail(source_bytes: bytes) -> bytes | None:
+    """Return JPEG thumbnail bytes for ``source_bytes`` (``None`` on failure).
 
-    Returns ``True`` on success, ``False`` if anything went wrong (missing
-    Pillow, corrupt image, unsupported mode). Thumbnail generation is a
-    best-effort optimisation — a failure must never block the upload.
+    Failure (missing Pillow, corrupt image, unsupported mode) is never
+    fatal — thumbnail generation is a best-effort optimisation and the
+    serve endpoint falls back to the original.
     """
     try:
         from io import BytesIO
@@ -96,7 +101,7 @@ def _generate_photo_thumbnail(
         from PIL import Image, ImageOps
     except Exception:
         logger.warning("Pillow not available — skipping photo thumbnail")
-        return False
+        return None
 
     try:
         with Image.open(BytesIO(source_bytes)) as img:
@@ -112,18 +117,35 @@ def _generate_photo_thumbnail(
             # original mode (RGBA, P, CMYK, etc.).
             if img.mode not in ("RGB", "L"):
                 img = img.convert("RGB")
-            dest_path.parent.mkdir(parents=True, exist_ok=True)
+            out = BytesIO()
             img.save(
-                str(dest_path),
+                out,
                 format="JPEG",
                 quality=PHOTO_THUMB_QUALITY,
                 optimize=True,
                 progressive=True,
             )
-        return True
+        return out.getvalue()
     except Exception:
-        logger.exception("Failed to generate photo thumbnail for %s", dest_path)
+        logger.exception("Failed to generate photo thumbnail")
+        return None
+
+
+def _generate_photo_thumbnail(
+    source_bytes: bytes,
+    dest_path: Path,
+) -> bool:
+    """Write a JPEG thumbnail of ``source_bytes`` to the local ``dest_path``.
+
+    Kept for callers that want a file on disk; uploads go through
+    :data:`PHOTOS_AREA` instead so thumbnails follow ``STORAGE_BACKEND``.
+    """
+    thumb = _render_photo_thumbnail(source_bytes)
+    if thumb is None:
         return False
+    dest_path.parent.mkdir(parents=True, exist_ok=True)
+    dest_path.write_bytes(thumb)
+    return True
 
 
 class DocumentService:
@@ -207,7 +229,6 @@ class DocumentService:
         file_uuid = uuid.uuid4().hex[:12]
         storage_name = f"{file_uuid}_{safe_name}"
         upload_dir = UPLOAD_BASE / str(project_id)
-        upload_dir.mkdir(parents=True, exist_ok=True)
         file_path = upload_dir / storage_name
 
         # Create DB record FIRST — if this fails we haven't written a file
@@ -224,9 +245,9 @@ class DocumentService:
 
         # Write file AFTER DB record so we can rollback cleanly
         try:
-            file_path.write_bytes(content)
+            await UPLOADS_AREA.write(file_path, content)
         except Exception:
-            logger.exception("Failed to write file to disk: %s", file_path)
+            logger.exception("Failed to store uploaded file: %s", file_path)
             raise HTTPException(
                 status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
                 detail="Failed to save file to disk.",
@@ -419,14 +440,16 @@ class DocumentService:
                 "Failed to publish documents.document.deleted event: %s", exc
             )
 
-        # Then remove file from disk (best-effort)
-        try:
-            file_path = Path(file_path_str)
-            if file_path.exists():
-                file_path.unlink()
-                logger.info("File removed: %s", file_path)
-        except Exception:
-            logger.warning("Failed to remove file: %s", file_path_str)
+        # Then remove the stored file (best-effort). Rows cross-linked from
+        # other modules (photos, punch list, DWG) point into those modules'
+        # areas — delete from whichever area holds the path.
+        if file_path_str:
+            try:
+                area = find_area(file_path_str) or UPLOADS_AREA
+                await area.delete(file_path_str)
+                logger.info("File removed: %s", file_path_str)
+            except Exception:
+                logger.warning("Failed to remove file: %s", file_path_str)
 
     # ── Summary ────────────────────────────────────────────────────────────
 
@@ -517,7 +540,6 @@ class PhotoService:
         file_uuid = uuid.uuid4().hex[:12]
         storage_name = f"{file_uuid}_{safe_name}"
         upload_dir = PHOTO_BASE / str(project_id)
-        upload_dir.mkdir(parents=True, exist_ok=True)
         file_path = upload_dir / storage_name
         # Thumbnail sits in a sibling directory with a stable .jpg extension
         # so the serve endpoint never has to guess the format.
@@ -543,9 +565,9 @@ class PhotoService:
 
         # Write file AFTER DB record
         try:
-            file_path.write_bytes(content)
+            await PHOTOS_AREA.write(file_path, content)
         except Exception:
-            logger.exception("Failed to write photo to disk: %s", file_path)
+            logger.exception("Failed to store photo: %s", file_path)
             raise HTTPException(
                 status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
                 detail="Failed to save photo to disk.",
@@ -553,7 +575,14 @@ class PhotoService:
 
         # Generate thumbnail from the in-memory bytes — failure is non-fatal;
         # the serve endpoint falls back to the original on miss.
-        thumb_generated = _generate_photo_thumbnail(content, thumb_path)
+        thumb_bytes = _render_photo_thumbnail(content)
+        thumb_generated = False
+        if thumb_bytes is not None:
+            try:
+                await PHOTOS_AREA.write(thumb_path, thumb_bytes)
+                thumb_generated = True
+            except Exception:
+                logger.exception("Failed to store photo thumbnail: %s", thumb_path)
         if thumb_generated:
             await self.repo.update_fields(photo.id, thumbnail_path=str(thumb_path))
             await self.session.refresh(photo)
@@ -687,12 +716,10 @@ class PhotoService:
         await self.repo.delete(photo_id)
         logger.info("Photo deleted: %s", photo_id)
 
-        # Then remove file from disk (best-effort)
+        # Then remove the stored file (best-effort)
         try:
-            file_path = Path(file_path_str)
-            if file_path.exists():
-                file_path.unlink()
-                logger.info("Photo file removed: %s", file_path)
+            await PHOTOS_AREA.delete(file_path_str)
+            logger.info("Photo file removed: %s", file_path_str)
         except Exception:
             logger.warning("Failed to remove photo file: %s", file_path_str)
 
@@ -701,9 +728,7 @@ class PhotoService:
         # originals.
         if thumb_path_str:
             try:
-                thumb_path = Path(thumb_path_str)
-                if thumb_path.exists():
-                    thumb_path.unlink()
+                await PHOTOS_AREA.delete(thumb_path_str)
             except Exception:
                 logger.warning("Failed to remove photo thumbnail: %s", thumb_path_str)
 
@@ -722,6 +747,7 @@ DISCIPLINE_PREFIX_MAP: dict[str, str] = {
 
 # Base directory for sheet thumbnails
 SHEET_THUMB_BASE = Path.home() / ".openestimator" / "sheets"
+SHEETS_AREA = FileArea("sheets", lambda: SHEET_THUMB_BASE)
 
 
 def detect_discipline_from_sheet_number(sheet_number: str | None) -> str | None:
@@ -927,9 +953,8 @@ class SheetService:
         # Save the original PDF to uploads
         file_uuid = uuid.uuid4().hex[:12]
         upload_dir = UPLOAD_BASE / str(project_id)
-        upload_dir.mkdir(parents=True, exist_ok=True)
         pdf_path = upload_dir / f"{file_uuid}_{safe_name}"
-        pdf_path.write_bytes(content)
+        await UPLOADS_AREA.write(pdf_path, content)
 
         # Also create a Document record for the uploaded PDF
         doc_repo = DocumentRepository(self.session)
@@ -945,14 +970,17 @@ class SheetService:
         document = await doc_repo.create(document)
         document_id = str(document.id)
 
-        # Create thumbnail directory
         thumb_dir = SHEET_THUMB_BASE / str(project_id)
-        thumb_dir.mkdir(parents=True, exist_ok=True)
-
         sheets: list[Sheet] = []
+        # Thumbnails are rendered in memory and stored after the PDF is
+        # closed (pdfplumber is synchronous; storage writes are async).
+        pending_thumbs: list[tuple[Path, bytes]] = []
 
         try:
-            with pdfplumber.open(str(pdf_path)) as pdf:
+            from io import BytesIO
+
+            # Parse from memory — works for local and S3 storage alike.
+            with pdfplumber.open(BytesIO(content)) as pdf:
                 for page_idx, page in enumerate(pdf.pages):
                     page_number = page_idx + 1
 
@@ -970,7 +998,9 @@ class SheetService:
                         page_image = page.to_image(resolution=72)
                         thumb_filename = f"{file_uuid}_page_{page_number}.png"
                         thumb_path = thumb_dir / thumb_filename
-                        page_image.save(str(thumb_path), format="PNG")
+                        png = BytesIO()
+                        page_image.save(png, format="PNG")
+                        pending_thumbs.append((thumb_path, png.getvalue()))
                         thumbnail_path_str = str(thumb_path)
                     except Exception:
                         logger.warning(
@@ -1000,6 +1030,17 @@ class SheetService:
                 status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
                 detail=f"Failed to process PDF file: {exc}",
             )
+
+        stored_thumbs: set[str] = set()
+        for thumb_path, png_bytes in pending_thumbs:
+            try:
+                await SHEETS_AREA.write(thumb_path, png_bytes)
+                stored_thumbs.add(str(thumb_path))
+            except Exception:
+                logger.warning("Failed to store sheet thumbnail %s", thumb_path)
+        for sheet in sheets:
+            if sheet.thumbnail_path and sheet.thumbnail_path not in stored_thumbs:
+                sheet.thumbnail_path = None
 
         if sheets:
             sheets = await self.repo.create_many(sheets)

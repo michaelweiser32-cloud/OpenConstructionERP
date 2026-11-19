@@ -990,17 +990,18 @@ async def import_meeting_summary(
     # here MUST NOT break the meeting create — the transcript file is
     # already on disk and the meeting itself is persisted.
     try:
-        from pathlib import Path as _Path
-
         from app.modules.documents.models import Document
+        from app.modules.documents.service import UPLOAD_BASE, UPLOADS_AREA
 
-        upload_dir = _Path.home() / ".openestimator" / "uploads" / str(project_id)
-        upload_dir.mkdir(parents=True, exist_ok=True)
+        # Same location as before (~/.openestimator/uploads/<project>/),
+        # stored through the Documents upload area so it follows
+        # STORAGE_BACKEND (local disk or S3 bucket).
+        upload_dir = UPLOAD_BASE / str(project_id)
         file_uuid = uuid.uuid4().hex[:12]
         safe_name = re.sub(r"[^\w.\-]", "_", file.filename or "transcript")
         storage_name = f"{file_uuid}_{safe_name}"
         transcript_path = upload_dir / storage_name
-        transcript_path.write_bytes(content)
+        await UPLOADS_AREA.write(transcript_path, content)
 
         doc = Document(
             project_id=project_id,
