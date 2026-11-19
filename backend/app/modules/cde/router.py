@@ -127,6 +127,7 @@ async def list_suitability_codes() -> SuitabilityCodesResponse:
 
 @router.get("/stats/", response_model=CDEStatsResponse)
 async def cde_stats(
+    _user_id: CurrentUserId,
     project_id: uuid.UUID = Query(...),
     service: CDEService = Depends(_get_service),
 ) -> CDEStatsResponse:

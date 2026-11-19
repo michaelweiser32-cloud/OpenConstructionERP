@@ -153,11 +153,17 @@ def open_geometry_stream(key: str) -> AsyncIterator[bytes]:
 
 
 def presigned_geometry_url(key: str, *, expires_in: int = 3600) -> str | None:
-    """Return a presigned URL for the blob (S3 only).
+    """Return a presigned URL for the blob (S3 only, opt-in).
 
-    ``None`` means the backend cannot presign — the caller should
-    stream via :func:`open_geometry_stream` instead.
+    ``None`` means the caller should stream the blob through its own
+    authenticated route instead — that is the default even on S3 unless
+    ``S3_PRESIGNED_DOWNLOADS=true``, so a private bucket never needs to
+    be reachable from browsers (see ``Settings.s3_presigned_downloads``).
     """
+    from app.config import get_settings
+
+    if not get_settings().s3_presigned_downloads:
+        return None
     return _backend().url_for(key, expires_in=expires_in)
 
 

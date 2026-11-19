@@ -395,86 +395,148 @@ async def _seed_admin_from_env() -> None:
         logger.warning("Admin seed from env skipped: %s", exc)
 
 
+# Demo accounts: (email, password env var, full name, role).
+_DEMO_ACCOUNTS: tuple[tuple[str, str, str, str], ...] = (
+    # Demo user is intentionally ``viewer`` so the admin bootstrap still
+    # fires for the first real registrant on a dev install.
+    ("demo@openestimator.io", "DEMO_ADMIN_PASSWORD", "Demo User", "viewer"),
+    ("estimator@openestimator.io", "DEMO_ESTIMATOR_PASSWORD", "Sarah Chen", "estimator"),
+    ("manager@openestimator.io", "DEMO_MANAGER_PASSWORD", "Thomas Müller", "manager"),
+)
+# Published in this repository (and earlier READMEs) — never acceptable
+# outside local development.
+_LEGACY_DEMO_PASSWORD = "DemoPass1234!"  # noqa: S105 — dev-only default
+_MIN_PUBLIC_DEMO_PASSWORD_LEN = 12
+
+
+def _env_truthy(name: str) -> bool:
+    return os.environ.get(name, "").strip().lower() in ("1", "true", "yes", "on")
+
+
+def _resolve_demo_passwords(app_env: str) -> dict[str, str | None]:
+    """Return ``{email: password_or_None}`` for every demo account.
+
+    * ``development``: ``DEMO_*_PASSWORD`` if set, else the legacy
+      ``DemoPass1234!`` (local convenience only).
+    * any other ``APP_ENV`` (public deployment): every ``DEMO_*_PASSWORD``
+      must be set, at least 12 characters and not the published legacy
+      password — otherwise startup fails fast with a clear message.
+
+    ``None`` means "keep whatever hash the existing row has" — only used in
+    development when no override is set.
+    """
+    public = app_env != "development"
+    resolved: dict[str, str | None] = {}
+    problems: list[str] = []
+    for email, env_name, _name, _role in _DEMO_ACCOUNTS:
+        value = os.environ.get(env_name, "")
+        if public:
+            if not value:
+                problems.append(f"{env_name} is not set")
+            elif len(value) < _MIN_PUBLIC_DEMO_PASSWORD_LEN or value == _LEGACY_DEMO_PASSWORD:
+                problems.append(
+                    f"{env_name} is too weak (min {_MIN_PUBLIC_DEMO_PASSWORD_LEN} chars, "
+                    "must not be the published default)"
+                )
+            resolved[email] = value
+        else:
+            resolved[email] = value or None
+    if problems:
+        raise RuntimeError(
+            "FATAL: demo accounts are enabled on a non-development deployment but "
+            + "; ".join(problems)
+            + ". Set strong per-deployment DEMO_ADMIN_PASSWORD / DEMO_ESTIMATOR_PASSWORD / "
+            "DEMO_MANAGER_PASSWORD, or set DISABLE_DEMO_ACCOUNTS=1 (or SEED_DEMO=false)."
+        )
+    return resolved
+
+
+async def _deactivate_demo_accounts() -> None:
+    """Disable demo logins left over in a persistent DB (DISABLE_DEMO_ACCOUNTS=1)."""
+    from sqlalchemy import select
+
+    from app.database import async_session_factory
+    from app.modules.users.models import User
+
+    emails = [a[0] for a in _DEMO_ACCOUNTS]
+    try:
+        async with async_session_factory() as session:
+            rows = (await session.execute(select(User).where(User.email.in_(emails)))).scalars().all()
+            for user in rows:
+                if user.is_active:
+                    user.is_active = False
+                    logger.info("Demo account deactivated: %s", user.email)
+            await session.commit()
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("Demo account deactivation skipped: %s", exc)
+
+
 async def _seed_demo_account() -> None:
-    """Create demo user + 5 demo projects if they don't exist yet.
+    """Create demo users + 5 demo projects if they don't exist yet.
 
     Idempotent — safe to call on every startup.  Creates:
-    - demo@openestimator.io / DemoPass1234!  (role=admin)
+    - demo@openestimator.io (viewer), estimator@openestimator.io
+      (estimator), manager@openestimator.io (manager)
     - 5 projects: residential-berlin, office-london, medical-us,
       school-paris, warehouse-dubai (each with 2 BOQs: detailed + budget)
 
-    Disable with SEED_DEMO=false. In production it's opt-IN (default
-    false) to avoid hitting Railway free-tier disk/memory limits on every
-    cold start.
+    Controls:
+    - ``DISABLE_DEMO_ACCOUNTS=1`` — never create demo accounts and
+      deactivate any that already exist. Wins over everything else.
+    - ``SEED_DEMO=false`` — skip seeding. Outside development seeding is
+      opt-IN (default false) to keep free-tier cold starts light.
+    - ``DEMO_ADMIN_PASSWORD`` / ``DEMO_ESTIMATOR_PASSWORD`` /
+      ``DEMO_MANAGER_PASSWORD`` — per-deployment passwords; mandatory and
+      strength-checked outside development (see _resolve_demo_passwords).
     """
-    default = "false" if os.environ.get("APP_ENV", "development") == "production" else "true"
+    app_env = os.environ.get("APP_ENV", "development")
+    if _env_truthy("DISABLE_DEMO_ACCOUNTS"):
+        await _deactivate_demo_accounts()
+        return
+    default = "false" if app_env == "production" else "true"
     if os.environ.get("SEED_DEMO", default).lower() in ("false", "0", "no"):
         return
+
+    # Raises (fail fast) on a public deployment with missing/weak passwords.
+    passwords = _resolve_demo_passwords(app_env)
 
     from sqlalchemy import func, select
 
     from app.database import async_session_factory
     from app.modules.projects.models import Project
     from app.modules.users.models import User
-    from app.modules.users.service import hash_password
+    from app.modules.users.service import hash_password, verify_password
 
     try:
         async with async_session_factory() as session:
-            # 1. Create demo user if missing
-            demo = (
-                await session.execute(select(User).where(User.email == "demo@openestimator.io"))
-            ).scalar_one_or_none()
-
-            if demo is None:
-                # Demo user is intentionally `viewer` so the admin bootstrap
-                # still fires for the first real registrant on a freshly
-                # provisioned install. The demo login still works for the
-                # hands-on walkthrough — just in read-only mode.
-                demo = User(
-                    id=uuid.uuid4(),
-                    email="demo@openestimator.io",
-                    hashed_password=hash_password("DemoPass1234!"),
-                    full_name="Demo User",
-                    role="viewer",
-                    locale="en",
-                    is_active=True,
-                    metadata_={},
-                )
-                session.add(demo)
-                await session.flush()
-                logger.info("Demo user created: demo@openestimator.io")
-
-            # Create additional demo accounts (estimator + manager)
-            demo_accounts = [
-                {
-                    "email": "estimator@openestimator.io",
-                    "password": "DemoPass1234!",
-                    "full_name": "Sarah Chen",
-                    "role": "estimator",
-                },
-                {
-                    "email": "manager@openestimator.io",
-                    "password": "DemoPass1234!",
-                    "full_name": "Thomas Müller",
-                    "role": "manager",
-                },
-            ]
-            for acct in demo_accounts:
-                exists = (await session.execute(select(User).where(User.email == acct["email"]))).scalar_one_or_none()
-                if exists is None:
-                    session.add(
-                        User(
-                            id=uuid.uuid4(),
-                            email=acct["email"],
-                            hashed_password=hash_password(acct["password"]),
-                            full_name=acct["full_name"],
-                            role=acct["role"],
-                            locale="en",
-                            is_active=True,
-                            metadata_={},
-                        )
+            # 1. Create (or re-key) the demo users
+            demo = None
+            for email, _env_name, full_name, role in _DEMO_ACCOUNTS:
+                password = passwords[email]
+                user = (await session.execute(select(User).where(User.email == email))).scalar_one_or_none()
+                if user is None:
+                    user = User(
+                        id=uuid.uuid4(),
+                        email=email,
+                        hashed_password=hash_password(password or _LEGACY_DEMO_PASSWORD),
+                        full_name=full_name,
+                        role=role,
+                        locale="en",
+                        is_active=True,
+                        metadata_={},
                     )
-                    logger.info("Demo user created: %s", acct["email"])
+                    session.add(user)
+                    await session.flush()
+                    logger.info("Demo user created: %s", email)
+                elif password is not None:
+                    # Explicit per-deployment password: re-apply on boot
+                    # when it changed so rotating the env var rotates the
+                    # login (and a persisted legacy hash gets replaced).
+                    if not verify_password(password, user.hashed_password):
+                        user.hashed_password = hash_password(password)
+                    user.is_active = True
+                if email == "demo@openestimator.io":
+                    demo = user
 
             # 2. Install 5 demo projects if user has none
             count = (
@@ -548,17 +610,23 @@ def create_app() -> FastAPI:
         if not cors_origins:
             cors_origins = ["https://openconstructionerp.com"]
 
-    # CORS origin regex — allows all *.vercel.app subdomains so preview
-    # deployments work without enumerating each URL. In production, prefer
-    # setting ALLOWED_ORIGINS=https://yourapp.vercel.app to narrow this.
-    # The regex is intentionally specific to vercel.app; it does NOT cover
-    # arbitrary third-party domains.
-    cors_origin_regex = settings.cors_origin_regex or r"https://([a-zA-Z0-9-]+\.)*vercel\.app"
-    if settings.is_production and not settings.cors_origin_regex:
-        logger.warning(
-            "CORS: using broad *.vercel.app regex. "
-            "Set CORS_ORIGIN_REGEX or ALLOWED_ORIGINS to narrow this to your specific domain."
-        )
+    # CORS origin regex. ``CORS_ORIGIN_REGEX`` wins when set (``none`` /
+    # ``off`` disables it). Without it, development keeps the historic
+    # *.vercel.app convenience regex for preview deployments; every other
+    # APP_ENV gets NO regex — a blanket *.vercel.app match would let any
+    # site hosted on Vercel make cross-origin calls to this API. The
+    # single-container image is same-origin and needs no CORS at all; a
+    # split Vercel+Render setup lists its exact URL in ALLOWED_ORIGINS.
+    _regex_setting = settings.cors_origin_regex.strip()
+    cors_origin_regex: str | None
+    if _regex_setting.lower() in ("none", "off", "false", "0"):
+        cors_origin_regex = None
+    elif _regex_setting:
+        cors_origin_regex = _regex_setting
+    elif settings.app_env == "development":
+        cors_origin_regex = r"https://([a-zA-Z0-9-]+\.)*vercel\.app"
+    else:
+        cors_origin_regex = None
 
     # Auth uses JWT in the Authorization header (not cookies), so
     # allow_credentials is not required for auth to work. It is kept True
@@ -572,6 +640,17 @@ def create_app() -> FastAPI:
         allow_methods=["GET", "HEAD", "POST", "PATCH", "PUT", "DELETE", "OPTIONS"],
         allow_headers=["Content-Type", "Authorization", "Accept", "Accept-Language"],
     )
+
+    # ── Host allowlist (optional) ───────────────────────────────────────
+    # ALLOWED_HOSTS=myapp.onrender.com,erp.example.com rejects requests
+    # whose Host header is not listed (Host-header injection in reset
+    # links, DNS rebinding). Default "*" = accept any host, which is what
+    # platform proxies with random hostnames need on first deploy.
+    _allowed_hosts = [h.strip() for h in os.environ.get("ALLOWED_HOSTS", "*").split(",") if h.strip()]
+    if _allowed_hosts and "*" not in _allowed_hosts:
+        from app.middleware.trusted_host import TrustedHostMiddleware
+
+        app.add_middleware(TrustedHostMiddleware, allowed_hosts=_allowed_hosts)
 
     # ── API Version header ──────────────────────────────────────────────
     from starlette.middleware.base import BaseHTTPMiddleware
@@ -1311,6 +1390,20 @@ def create_app() -> FastAPI:
         # `relation "oe_users_user" does not exist` (issue #42).
         # SQLAlchemy create_all is idempotent on PG and harmless on existing
         # databases — it only creates tables that do not yet exist.
+        # Blob storage: fail fast when STORAGE_BACKEND=s3 is misconfigured
+        # (missing aioboto3, unreachable bucket) instead of failing uploads.
+        _section("Storage")
+        from app.core.storage import validate_storage_backend
+
+        _storage_desc = await validate_storage_backend(settings)
+        logger.info("Blob storage: %s", _storage_desc)
+        if settings.storage_backend == "local" and settings.app_env != "development":
+            logger.warning(
+                "STORAGE_BACKEND=local: uploaded files live on this machine's disk. "
+                "On hosts with an ephemeral filesystem (e.g. Render free) they are lost "
+                "on restart — see DEPLOY.md 'Durable file storage'."
+            )
+
         _section("Database")
         if "sqlite" in settings.database_url or "postgresql" in settings.database_url:
             # SQLite auto-migration: add missing columns before create_all
@@ -1566,7 +1659,8 @@ def create_app() -> FastAPI:
         if _cli_host and _cli_port:
             _url = f"http://{_cli_host}:{_cli_port}"
             logger.info("OpenConstructionERP is ready at %s", _url)
-            logger.info("Demo login: demo@openestimator.io / DemoPass1234!")
+            if not os.environ.get("DEMO_ADMIN_PASSWORD"):
+                logger.info("Demo login: demo@openestimator.io / DemoPass1234!")
             if _cli_data_dir:
                 logger.info("Data directory: %s", _cli_data_dir)
             logger.info("Press Ctrl+C to stop. Docs: https://openconstructionerp.com/docs")

@@ -536,17 +536,19 @@ One command installs everything. Opens browser at **http://localhost:8080** with
 
 ### Demo Accounts
 
-Three demo accounts are created automatically on first start. **Passwords are
-randomly generated per installation and printed to the container logs** on
-first boot — look for the `=== DEMO ACCOUNTS ===` banner in `docker compose
-logs backend` (or in the stdout of `make dev`). You can override them with
-environment variables before the first start.
+Three demo accounts are created automatically on first start of a **local
+development** install (`APP_ENV=development`). On any other `APP_ENV`
+(production / staging — e.g. a public deployment) demo seeding is opt-in
+(`SEED_DEMO=true`) and the app **refuses to start** unless all three
+`DEMO_*_PASSWORD` variables are set to strong (≥ 12 characters), unique
+values. `DISABLE_DEMO_ACCOUNTS=1` turns demo accounts off entirely and
+deactivates any that already exist. See [DEPLOY.md](DEPLOY.md).
 
 | Account | Email | Password source | Role |
 |---------|-------|-----------------|------|
-| Admin | `demo@openestimator.io` | `DEMO_ADMIN_PASSWORD` env var, or generated | Full access |
-| Estimator | `estimator@openestimator.io` | `DEMO_ESTIMATOR_PASSWORD` env var, or generated | Estimator |
-| Manager | `manager@openestimator.io` | `DEMO_MANAGER_PASSWORD` env var, or generated | Manager |
+| Demo | `demo@openestimator.io` | `DEMO_ADMIN_PASSWORD` env var | Viewer (read-only) |
+| Estimator | `estimator@openestimator.io` | `DEMO_ESTIMATOR_PASSWORD` env var | Estimator |
+| Manager | `manager@openestimator.io` | `DEMO_MANAGER_PASSWORD` env var | Manager |
 
 > Demo accounts include 5 pre-loaded projects from Berlin, London, New York, Paris, and Dubai with complete BOQs, schedules, and cost models.
 >

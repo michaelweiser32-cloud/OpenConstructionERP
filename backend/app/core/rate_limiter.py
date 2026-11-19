@@ -11,6 +11,7 @@ Limits are configurable via environment variables:
 
 from __future__ import annotations
 
+import ipaddress
 import time
 from collections import defaultdict
 from threading import Lock
@@ -20,11 +21,38 @@ if TYPE_CHECKING:
     from starlette.requests import Request
 
 
+def _client_from_forwarded_for(xff: str) -> str:
+    """Pick the client IP out of an ``X-Forwarded-For`` chain.
+
+    Each proxy *appends* the address it received the connection from, so
+    only the right-hand side of the chain is trustworthy: anything to the
+    left may have been typed by the client. We therefore walk the chain
+    from the right and return the first publicly routable address — that
+    is the address the outermost edge proxy (Render, Cloudflare, nginx…)
+    actually saw. Private / loopback hops (the platform's internal load
+    balancers) are skipped.
+
+    If no public address is present (LAN / docker-compose installs where
+    every hop is private) we fall back to the left-most entry, matching
+    the historic behaviour for intranet deployments.
+    """
+    entries = [e.strip() for e in xff.split(",") if e.strip()]
+    if not entries:
+        return ""
+    for entry in reversed(entries):
+        try:
+            if ipaddress.ip_address(entry).is_global:
+                return entry
+        except ValueError:
+            continue
+    return entries[0]
+
+
 def client_identifier(request: Request) -> str:
     """Resolve the best available client identifier for rate-limiting buckets.
 
-    Prefers the ``X-Forwarded-For`` header when present (first entry — the
-    original client) so that Uvicorn sitting behind a reverse proxy
+    Prefers the ``X-Forwarded-For`` header when present (right-most public
+    entry, see :func:`_client_from_forwarded_for`) so that Uvicorn sitting behind a reverse proxy
     (nginx/Traefik/Caddy) doesn't lump every request under a single proxy IP
     and accidentally lock out legitimate users after one attacker hits the
     limit. Falls back to the direct socket peer.
@@ -36,9 +64,9 @@ def client_identifier(request: Request) -> str:
     """
     xff = request.headers.get("x-forwarded-for")
     if xff:
-        first = xff.split(",", 1)[0].strip()
-        if first:
-            return first
+        resolved = _client_from_forwarded_for(xff)
+        if resolved:
+            return resolved
     if request.client and request.client.host:
         return request.client.host
     return "unknown"

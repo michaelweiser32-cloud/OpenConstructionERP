@@ -50,6 +50,7 @@ async def list_teams_by_query(
 @router.get("/project/{project_id}", response_model=list[TeamResponse])
 async def list_teams(
     project_id: uuid.UUID,
+    _user_id: CurrentUserId,
     service: TeamService = Depends(_get_service),
 ) -> list[TeamResponse]:
     """List teams for a project."""
@@ -102,6 +103,7 @@ async def delete_team(
 @router.get("/{team_id}/members/", response_model=list[MembershipResponse])
 async def list_members(
     team_id: uuid.UUID,
+    _user_id: CurrentUserId,
     service: TeamService = Depends(_get_service),
 ) -> list[MembershipResponse]:
     """List members of a team."""

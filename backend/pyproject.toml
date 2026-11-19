@@ -148,6 +148,10 @@ dev = [
     "pytest-xdist>=3.5.0",
     "httpx>=0.28.0",
     "factory-boy>=3.3.0",
+    # S3 storage tests run against a local fake S3 (moto server) — never a
+    # real cloud account. aioboto3 is the S3 backend's runtime dependency.
+    "moto[server]>=5.0.0",
+    "aioboto3>=12.0.0",
     "ruff>=0.8.0",
     "mypy>=1.13.0",
     "pre-commit>=4.0.0",

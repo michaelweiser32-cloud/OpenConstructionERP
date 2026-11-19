@@ -16,17 +16,13 @@ import { cacheResponse, getCachedResponse, queueMutation } from './offlineStore'
 import { logApiError, logError } from './errorLogger';
 
 // Resolve API base URL in this order:
-//   1. VITE_API_URL build-time env var (preferred — set per deployment)
-//   2. Hardcoded Railway production URL when running on *.vercel.app
-//      (covers the case where the host's experimentalServices catches
-//      /api/* before the rewrite rule applies)
-//   3. Same-origin /api (dev with Vite proxy, or self-hosted unified image)
+//   1. VITE_API_URL build-time env var — only for split deployments where
+//      the SPA is hosted separately from the API (e.g. Vercel + Render).
+//   2. Same-origin /api (dev with Vite proxy, or the single-container
+//      image where the backend serves the SPA — the recommended setup).
 function _resolveBaseUrl(): string {
   const envUrl = (import.meta.env.VITE_API_URL as string | undefined)?.replace(/\/$/, '');
   if (envUrl) return envUrl;
-  if (typeof window !== 'undefined' && /\.vercel\.app$/.test(window.location.hostname)) {
-    return 'https://openconstructionerp-production.up.railway.app/api';
-  }
   return '/api';
 }
 

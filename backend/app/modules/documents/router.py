@@ -25,9 +25,10 @@ from datetime import datetime
 from pathlib import Path
 
 from fastapi import APIRouter, Depends, File, Form, Header, HTTPException, Query, UploadFile, status
-from fastapi.responses import FileResponse
+from starlette.responses import Response
 
 from app.core.bulk_ops import BulkDeleteRequest
+from app.core.file_areas import FileArea
 from app.core.rate_limiter import upload_limiter
 from app.dependencies import CurrentUserId, RequirePermission, SessionDep, verify_project_access
 from app.modules.documents.schemas import (
@@ -48,7 +49,9 @@ from app.modules.documents.service import (
     MAX_FILE_SIZE,
     PHOTO_BASE,
     PHOTO_THUMB_BASE,
+    PHOTOS_AREA,
     UPLOAD_BASE,
+    UPLOADS_AREA,
     DocumentBIMLinkService,
     DocumentService,
     PhotoService,
@@ -57,6 +60,17 @@ from app.modules.documents.service import (
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
+
+
+async def _stored_file_exists(area: FileArea, path: Path) -> bool:
+    """Existence check used AFTER the path-containment / symlink checks.
+
+    Local backend: the historical ``exists() and is_file()`` on disk.
+    S3 backend: the blob must exist in the bucket.
+    """
+    if area.is_remote:
+        return await area.exists(path)
+    return path.exists() and path.is_file()
 
 
 def _get_service(session: SessionDep) -> DocumentService:
@@ -415,8 +429,8 @@ async def get_photo(
 async def serve_photo_file(
     photo_id: uuid.UUID,
     service: PhotoService = Depends(_get_photo_service),
-) -> FileResponse:
-    """Serve the actual photo file."""
+) -> Response:
+    """Serve the actual photo file (from local disk or the S3 bucket)."""
     photo = await service.get_photo(photo_id)
     file_path = Path(photo.file_path).resolve()
     photo_base = Path(PHOTO_BASE).resolve()
@@ -436,7 +450,7 @@ async def serve_photo_file(
             detail="Symlinks not permitted",
         )
 
-    if not file_path.exists() or not file_path.is_file():
+    if not await _stored_file_exists(PHOTOS_AREA, file_path):
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Photo file not found on disk",
@@ -456,8 +470,8 @@ async def serve_photo_file(
     }
     media_type = media_types.get(ext, "image/jpeg")
 
-    return FileResponse(
-        path=str(file_path),
+    return await PHOTOS_AREA.response(
+        file_path,
         filename=photo.filename,
         media_type=media_type,
     )
@@ -470,7 +484,7 @@ async def serve_photo_file(
 async def serve_photo_thumbnail(
     photo_id: uuid.UUID,
     service: PhotoService = Depends(_get_photo_service),
-) -> FileResponse:
+) -> Response:
     """Serve the generated thumbnail for a photo.
 
     Falls back to the full-resolution file when no thumbnail was generated
@@ -490,9 +504,9 @@ async def serve_photo_thumbnail(
             # Only allow paths that sit under the thumb-root — defence against
             # symlink escape + stored-path tampering.
             thumb_path.relative_to(thumb_base)
-            if thumb_path.exists() and thumb_path.is_file() and not thumb_path.is_symlink():
-                return FileResponse(
-                    path=str(thumb_path),
+            if not thumb_path.is_symlink() and await _stored_file_exists(PHOTOS_AREA, thumb_path):
+                return await PHOTOS_AREA.response(
+                    thumb_path,
                     media_type="image/jpeg",
                     headers={"Cache-Control": "public, max-age=86400"},
                 )
@@ -511,7 +525,7 @@ async def serve_photo_thumbnail(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Access denied",
         )
-    if file_path.is_symlink() or not file_path.exists() or not file_path.is_file():
+    if file_path.is_symlink() or not await _stored_file_exists(PHOTOS_AREA, file_path):
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Photo file not found on disk",
@@ -528,8 +542,8 @@ async def serve_photo_thumbnail(
         ".tif": "image/tiff",
     }
     media_type = media_types.get(ext, "image/jpeg")
-    return FileResponse(
-        path=str(file_path),
+    return await PHOTOS_AREA.response(
+        file_path,
         media_type=media_type,
         headers={"Cache-Control": "public, max-age=3600"},
     )
@@ -879,8 +893,8 @@ async def download_document(
     document_id: uuid.UUID,
     user_id: CurrentUserId,
     service: DocumentService = Depends(_get_service),
-) -> FileResponse:
-    """Download a document file.
+) -> Response:
+    """Download a document file (from local disk or the S3 bucket).
 
     Security: uses ``Path.resolve().relative_to()`` for containment check so
     case-insensitive filesystems and symlinks cannot escape ``UPLOAD_BASE``.
@@ -906,14 +920,14 @@ async def download_document(
             detail="Symlinks not permitted",
         )
 
-    if not file_path.exists() or not file_path.is_file():
+    if not await _stored_file_exists(UPLOADS_AREA, file_path):
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="File not found on disk",
         )
 
-    return FileResponse(
-        path=str(file_path),
+    return await UPLOADS_AREA.response(
+        file_path,
         filename=doc.name,
         media_type=doc.mime_type or "application/octet-stream",
     )

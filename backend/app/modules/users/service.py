@@ -189,8 +189,14 @@ class UserService:
         # admin rather than any user — a prior `make seed` run may have
         # inserted demo/viewer rows that would otherwise block the first
         # real registrant from receiving admin rights.
+        #
+        # Outside development the bootstrap is off by default
+        # (``ALLOW_FIRST_USER_ADMIN``): on a public URL the first stranger
+        # to register would otherwise own the install. Production admins
+        # are provisioned via ADMIN_EMAIL / ADMIN_PASSWORD instead.
+        bootstrap_allowed = getattr(_s, "first_user_admin_enabled", True)
         admin_exists = await self.user_repo.has_admin()
-        role = "admin" if not admin_exists else default_role
+        role = "admin" if (not admin_exists and bootstrap_allowed) else default_role
 
         # Build registration metadata from form fields + auto-collected data
         reg_meta: dict[str, object] = {}

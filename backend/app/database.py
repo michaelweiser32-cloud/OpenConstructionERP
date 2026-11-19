@@ -4,6 +4,7 @@ Supports both PostgreSQL (production) and SQLite (local dev without Docker).
 Set DATABASE_URL to 'sqlite+aiosqlite:///./openestimate.db' for SQLite mode.
 """
 
+import os
 import uuid
 from collections.abc import AsyncGenerator
 from datetime import datetime
@@ -121,6 +122,25 @@ def create_engine_from_settings():
     else:
         kwargs["pool_size"] = settings.database_pool_size
         kwargs["max_overflow"] = settings.database_max_overflow
+        # Hosted Postgres sleeps / drops idle connections (Neon scales to
+        # zero after 5 min, Render spins the app down). Validate pooled
+        # connections before use and recycle them well before typical
+        # server-side idle timeouts.
+        kwargs["pool_pre_ping"] = True
+        kwargs["pool_recycle"] = 300
+
+        from app.core.db_url import is_pgbouncer_host
+
+        if is_pgbouncer_host(url) or os.environ.get("DATABASE_PGBOUNCER", "").lower() in ("1", "true", "yes"):
+            # Transaction-mode PgBouncer (e.g. Neon's "-pooler" endpoint):
+            # disable asyncpg's statement cache and use unique prepared
+            # statement names so pooled backends never collide.
+            import uuid as _uuid
+
+            kwargs["connect_args"] = {
+                "statement_cache_size": 0,
+                "prepared_statement_name_func": lambda: f"__asyncpg_{_uuid.uuid4()}__",
+            }
 
     return create_async_engine(url, **kwargs)
 

@@ -9,6 +9,7 @@ from typing import Any
 from fastapi import HTTPException, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.file_areas import FileArea
 from app.modules.takeoff.models import TakeoffDocument, TakeoffMeasurement
 from app.modules.takeoff.repository import MeasurementRepository, TakeoffRepository
 from app.modules.takeoff.schemas import TakeoffMeasurementCreate, TakeoffMeasurementUpdate
@@ -17,6 +18,8 @@ logger = logging.getLogger(__name__)
 
 # Directory where uploaded PDF files are stored on disk
 _TAKEOFF_DOCUMENTS_DIR = Path.home() / ".openestimator" / "takeoff_documents"
+# Follows STORAGE_BACKEND: same directory on local disk, or the S3 bucket.
+TAKEOFF_AREA = FileArea("takeoff_documents", lambda: _TAKEOFF_DOCUMENTS_DIR)
 
 
 def _describe_pdf_input(content: bytes, *, filename: str | None = None) -> str:
@@ -184,11 +187,10 @@ class TakeoffService:
                 detail="Failed to parse PDF document. Please check the file and try again.",
             )
 
-        # Save the PDF file to disk so it can be retrieved later for viewing
-        _TAKEOFF_DOCUMENTS_DIR.mkdir(parents=True, exist_ok=True)
+        # Store the PDF so it can be retrieved later for viewing
         doc_id = uuid.uuid4()
         file_path = _TAKEOFF_DOCUMENTS_DIR / f"{doc_id}.pdf"
-        file_path.write_bytes(content)
+        await TAKEOFF_AREA.write(file_path, content)
 
         doc = TakeoffDocument(
             id=doc_id,
@@ -298,10 +300,8 @@ class TakeoffService:
         doc = await self.repo.get_by_id(uuid.UUID(doc_id))
         if doc is not None and doc.file_path:
             try:
-                file_path = Path(doc.file_path)
-                if file_path.exists():
-                    file_path.unlink()
-                    logger.info("Removed takeoff PDF file: %s", file_path)
+                await TAKEOFF_AREA.delete(doc.file_path)
+                logger.info("Removed takeoff PDF file: %s", doc.file_path)
             except Exception:
                 logger.warning("Failed to remove takeoff PDF file: %s", doc.file_path)
         await self.repo.delete(uuid.UUID(doc_id))
