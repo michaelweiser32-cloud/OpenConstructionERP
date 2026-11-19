@@ -45,9 +45,18 @@ class OpenCDEService:
 
     # ── Projects ─────────────────────────────────────────────────────────
 
-    async def list_projects(self) -> list[BCFProject]:
-        """List all projects in BCF format."""
+    async def list_projects(self, user_id: str) -> list[BCFProject]:
+        """List the caller's projects in BCF format.
+
+        Same rule as :func:`app.dependencies.verify_project_access`: admins
+        see every project, everyone else only the projects they own.
+        """
+        from app.modules.users.models import User
+
         stmt = select(Project).order_by(Project.created_at.desc())
+        user = await self.session.get(User, uuid.UUID(str(user_id)))
+        if user is None or getattr(user, "role", "") != "admin":
+            stmt = stmt.where(Project.owner_id == uuid.UUID(str(user_id)))
         result = await self.session.execute(stmt)
         projects = result.scalars().all()
         return [
@@ -55,8 +64,11 @@ class OpenCDEService:
             for p in projects
         ]
 
-    async def get_project(self, project_id: uuid.UUID) -> BCFProject:
-        """Get a single project in BCF format."""
+    async def get_project(self, project_id: uuid.UUID, user_id: str) -> BCFProject:
+        """Get a single project in BCF format (404 unless the caller may access it)."""
+        from app.dependencies import verify_project_access
+
+        await verify_project_access(project_id, user_id, self.session)
         project = await self.session.get(Project, project_id)
         if project is None:
             raise HTTPException(

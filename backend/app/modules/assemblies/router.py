@@ -23,7 +23,13 @@ from fastapi import APIRouter, Depends, HTTPException, Query, status
 from pydantic import BaseModel, Field
 from sqlalchemy import select
 
-from app.dependencies import CurrentUserId, CurrentUserPayload, RequirePermission, SessionDep
+from app.dependencies import (
+    CurrentUserId,
+    CurrentUserPayload,
+    RequirePermission,
+    SessionDep,
+    require_project_access_if_given,
+)
 from app.modules.assemblies.schemas import (
     ApplyToBOQRequest,
     AssemblyCreate,
@@ -188,7 +194,7 @@ async def create_assembly(
 @router.get(
     "/",
     response_model=AssemblySearchResponse,
-    dependencies=[Depends(RequirePermission("assemblies.read"))],
+    dependencies=[Depends(RequirePermission("assemblies.read")), Depends(require_project_access_if_given)],
 )
 async def search_assemblies(
     q: str | None = Query(default=None, description="Text search on code, name, description"),

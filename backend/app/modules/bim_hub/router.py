@@ -57,7 +57,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.rate_limiter import upload_limiter
-from app.dependencies import CurrentUserId, RequirePermission, SessionDep
+from app.dependencies import CurrentUserId, RequirePermission, SessionDep, require_project_access
 from app.modules.bim_hub import file_storage as bim_file_storage
 from app.modules.bim_hub.schemas import (
     AssetInfoUpdateRequest,
@@ -2702,7 +2702,7 @@ async def bim_element_similar(
 
 @router.get(
     "/coverage-summary/",
-    dependencies=[Depends(RequirePermission("bim.read"))],
+    dependencies=[Depends(RequirePermission("bim.read")), Depends(require_project_access)],
 )
 async def bim_coverage_summary(
     session: SessionDep,

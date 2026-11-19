@@ -17,7 +17,7 @@ from typing import Any
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 
 from app.core.bulk_ops import BulkDeleteRequest, BulkStatusRequest
-from app.dependencies import CurrentUserId, RequirePermission, SessionDep
+from app.dependencies import CurrentUserId, RequirePermission, SessionDep, require_project_access
 from app.modules.risk.schemas import (
     RiskCreate,
     RiskMatrixCell,
@@ -65,7 +65,7 @@ def _risk_to_response(item: object) -> RiskResponse:
 # ── Summary ──────────────────────────────────────────────────────────────────
 
 
-@router.get("/summary/", response_model=RiskSummary)
+@router.get("/summary/", response_model=RiskSummary, dependencies=[Depends(require_project_access)])
 async def get_summary(
     project_id: uuid.UUID = Query(...),
     user_id: CurrentUserId = None,  # type: ignore[assignment]
@@ -79,7 +79,7 @@ async def get_summary(
 # ── Matrix ───────────────────────────────────────────────────────────────────
 
 
-@router.get("/matrix/", response_model=RiskMatrixResponse)
+@router.get("/matrix/", response_model=RiskMatrixResponse, dependencies=[Depends(require_project_access)])
 async def get_matrix(
     project_id: uuid.UUID = Query(...),
     user_id: CurrentUserId = None,  # type: ignore[assignment]
@@ -118,7 +118,7 @@ async def create_risk(
 # ── List ─────────────────────────────────────────────────────────────────────
 
 
-@router.get("/", response_model=list[RiskResponse])
+@router.get("/", response_model=list[RiskResponse], dependencies=[Depends(require_project_access)])
 async def list_risks(
     project_id: uuid.UUID = Query(...),
     user_id: CurrentUserId = None,  # type: ignore[assignment]

@@ -22,7 +22,7 @@ import uuid
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 
-from app.dependencies import CurrentUserId, RequirePermission, SessionDep, verify_project_access
+from app.dependencies import CurrentUserId, RequirePermission, SessionDep, require_project_access, verify_project_access
 from app.modules.costmodel.schemas import (
     BudgetLineCreate,
     BudgetLineResponse,
@@ -118,7 +118,7 @@ def _cash_flow_to_response(entry: object) -> CashFlowResponse:
 @router.get(
     "/projects/{project_id}/5d/dashboard/",
     response_model=DashboardResponse,
-    dependencies=[Depends(RequirePermission("costmodel.read"))],
+    dependencies=[Depends(RequirePermission("costmodel.read")), Depends(require_project_access)],
 )
 async def get_dashboard(
     project_id: uuid.UUID,
@@ -131,7 +131,7 @@ async def get_dashboard(
 @router.get(
     "/projects/{project_id}/5d/s-curve/",
     response_model=SCurveData,
-    dependencies=[Depends(RequirePermission("costmodel.read"))],
+    dependencies=[Depends(RequirePermission("costmodel.read")), Depends(require_project_access)],
 )
 async def get_s_curve(
     project_id: uuid.UUID,
@@ -144,7 +144,7 @@ async def get_s_curve(
 @router.get(
     "/projects/{project_id}/5d/cash-flow/",
     response_model=CashFlowData,
-    dependencies=[Depends(RequirePermission("costmodel.read"))],
+    dependencies=[Depends(RequirePermission("costmodel.read")), Depends(require_project_access)],
 )
 async def get_cash_flow(
     project_id: uuid.UUID,
@@ -160,7 +160,7 @@ async def get_cash_flow(
 @router.get(
     "/projects/{project_id}/5d/budget/",
     response_model=BudgetSummary,
-    dependencies=[Depends(RequirePermission("costmodel.read"))],
+    dependencies=[Depends(RequirePermission("costmodel.read")), Depends(require_project_access)],
 )
 async def get_budget_summary(
     project_id: uuid.UUID,
@@ -173,7 +173,7 @@ async def get_budget_summary(
 @router.get(
     "/projects/{project_id}/5d/budget-lines/",
     response_model=list[BudgetLineResponse],
-    dependencies=[Depends(RequirePermission("costmodel.read"))],
+    dependencies=[Depends(RequirePermission("costmodel.read")), Depends(require_project_access)],
 )
 async def list_budget_lines(
     project_id: uuid.UUID,
@@ -300,7 +300,7 @@ async def create_snapshot(
 @router.get(
     "/projects/{project_id}/5d/snapshots/",
     response_model=list[SnapshotResponse],
-    dependencies=[Depends(RequirePermission("costmodel.read"))],
+    dependencies=[Depends(RequirePermission("costmodel.read")), Depends(require_project_access)],
 )
 async def list_snapshots(
     project_id: uuid.UUID,
@@ -359,7 +359,7 @@ async def delete_snapshot(
 @router.get(
     "/projects/{project_id}/5d/evm/",
     response_model=EVMResponse,
-    dependencies=[Depends(RequirePermission("costmodel.read"))],
+    dependencies=[Depends(RequirePermission("costmodel.read")), Depends(require_project_access)],
 )
 async def get_evm(
     project_id: uuid.UUID,

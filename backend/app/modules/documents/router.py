@@ -425,13 +425,23 @@ async def get_photo(
 # ── Serve photo file ────────────────────────────────────────────────────
 
 
-@router.get("/photos/{photo_id}/file/")
+@router.get(
+    "/photos/{photo_id}/file/",
+    dependencies=[Depends(RequirePermission("documents.read"))],
+)
 async def serve_photo_file(
     photo_id: uuid.UUID,
+    session: SessionDep,
+    user_id: CurrentUserId,
     service: PhotoService = Depends(_get_photo_service),
 ) -> Response:
-    """Serve the actual photo file (from local disk or the S3 bucket)."""
+    """Serve the actual photo file (from local disk or the S3 bucket).
+
+    Requires a logged-in user with ``documents.read`` who can access the
+    photo's project (owner or admin) — otherwise 401 / 403 / 404.
+    """
     photo = await service.get_photo(photo_id)
+    await verify_project_access(photo.project_id, user_id, session)
     file_path = Path(photo.file_path).resolve()
     photo_base = Path(PHOTO_BASE).resolve()
 
@@ -480,9 +490,14 @@ async def serve_photo_file(
 # ── Serve photo thumbnail ──────────────────────────────────────────────
 
 
-@router.get("/photos/{photo_id}/thumb/")
+@router.get(
+    "/photos/{photo_id}/thumb/",
+    dependencies=[Depends(RequirePermission("documents.read"))],
+)
 async def serve_photo_thumbnail(
     photo_id: uuid.UUID,
+    session: SessionDep,
+    user_id: CurrentUserId,
     service: PhotoService = Depends(_get_photo_service),
 ) -> Response:
     """Serve the generated thumbnail for a photo.
@@ -493,6 +508,7 @@ async def serve_photo_thumbnail(
     grid functional rather than showing broken-image tiles.
     """
     photo = await service.get_photo(photo_id)
+    await verify_project_access(photo.project_id, user_id, session)
     thumb_path_str = getattr(photo, "thumbnail_path", None)
 
     thumb_base = Path(PHOTO_THUMB_BASE).resolve()
@@ -508,7 +524,8 @@ async def serve_photo_thumbnail(
                 return await PHOTOS_AREA.response(
                     thumb_path,
                     media_type="image/jpeg",
-                    headers={"Cache-Control": "public, max-age=86400"},
+                    # private: authorised per user — shared caches/CDNs must not store it
+                    headers={"Cache-Control": "private, max-age=86400"},
                 )
         except ValueError:
             logger.warning(
@@ -545,7 +562,7 @@ async def serve_photo_thumbnail(
     return await PHOTOS_AREA.response(
         file_path,
         media_type=media_type,
-        headers={"Cache-Control": "public, max-age=3600"},
+        headers={"Cache-Control": "private, max-age=3600"},
     )
 
 

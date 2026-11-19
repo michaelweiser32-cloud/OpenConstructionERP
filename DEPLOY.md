@@ -456,9 +456,17 @@ What this setup enforces:
 - [x] S3 file storage (when enabled) keeps the bucket private: no public
       ACLs, files streamed through the app's own routes (same checks as
       local disk), presigned URLs opt-in only; startup fails on a missing
-      `aioboto3` or unreachable bucket. Note: the photo file/thumbnail
-      routes themselves are still reachable without login (by photo UUID)
-      — see the follow-up list.
+      `aioboto3` or unreachable bucket.
+- [x] Project photos and thumbnails require login, `documents.read` and
+      access to the photo's project; thumbnails are `Cache-Control:
+      private` (never stored by shared caches/CDNs).
+- [x] Calendar (`.ics`) feed links verify the **full** API key (hash
+      match), reject revoked/expired keys and only serve projects the key's
+      owner can access. Existing feed links built from a full key keep
+      working.
+- [x] BCF/openCDE and the project-scoped list endpoints (risks, change
+      orders, procurement, takeoff, markups, CDE, 5D cost model, teams …)
+      only return projects the caller owns (admins: all).
 - [x] Previously unauthenticated read endpoints (BCF/OpenCDE project &
       topic listings, team listings, CDE stats) now require login.
 

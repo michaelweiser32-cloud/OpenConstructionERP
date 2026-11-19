@@ -367,6 +367,49 @@ def _ical_dt(iso_str: str | None) -> str | None:
     return clean + "T090000Z"
 
 
+async def _authenticate_calendar_token(
+    token: str,
+    project_id: uuid.UUID,
+    session: SessionDep,
+) -> None:
+    """Authenticate a calendar-feed API key and authorise the project.
+
+    Calendar apps can only send credentials in the URL, so the full API
+    key arrives as ``?token=``. It is verified exactly like it is stored by
+    :func:`app.modules.users.service.generate_api_key`: the SHA-256 of the
+    FULL key must equal ``APIKey.key_hash`` (an indexed, unique column), the
+    key must be active and unexpired, its owner must be an active user, and
+    that user must have access to ``project_id``.
+
+    The previous implementation accepted any token whose first 8 characters
+    matched a stored ``key_prefix`` — never the full secret.
+    """
+    import hashlib
+
+    from app.dependencies import verify_project_access
+    from app.modules.users.models import User
+    from app.modules.users.repository import APIKeyRepository
+
+    invalid = HTTPException(status_code=401, detail="Invalid or expired token")
+    if not token or len(token) > 512:
+        raise invalid
+    key_hash = hashlib.sha256(token.encode("utf-8")).hexdigest()
+    api_key = await APIKeyRepository(session).get_by_hash(key_hash)  # active keys only
+    if api_key is None:
+        raise invalid
+    expires_at = api_key.expires_at
+    if expires_at is not None:
+        if expires_at.tzinfo is None:  # SQLite returns naive datetimes
+            expires_at = expires_at.replace(tzinfo=UTC)
+        if expires_at <= datetime.now(UTC):
+            raise invalid
+    owner = await session.get(User, api_key.user_id)
+    if owner is None or not owner.is_active:
+        raise invalid
+    # Same rule as every other project route: owner or admin, else 404.
+    await verify_project_access(project_id, str(owner.id), session)
+
+
 @router.get("/calendar/{project_id}.ics/")
 async def calendar_feed(
     project_id: uuid.UUID,
@@ -380,22 +423,7 @@ async def calendar_feed(
     """
     from sqlalchemy import select
 
-    from app.modules.users.models import APIKey
-
-    # Authenticate via API key token
-    # We match on key_prefix (first 8 chars) then verify full hash.
-    # For simplicity, we match the raw token against key_hash (bcrypt) or
-    # accept the prefix-based lookup.  In this implementation we accept
-    # the token if its first 8 chars match a key_prefix belonging to an
-    # active key.  This is intentionally lightweight for calendar apps.
-    if len(token) < 8:
-        raise HTTPException(status_code=401, detail="Invalid token")
-
-    prefix = token[:8]
-    key_result = await session.execute(select(APIKey).where(APIKey.key_prefix == prefix, APIKey.is_active.is_(True)))
-    api_key = key_result.scalars().first()
-    if api_key is None:
-        raise HTTPException(status_code=401, detail="Invalid or expired token")
+    await _authenticate_calendar_token(token, project_id, session)
 
     # Build iCal content
     from app.config import get_settings

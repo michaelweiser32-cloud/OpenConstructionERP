@@ -63,6 +63,7 @@ from app.dependencies import (
     CurrentUserPayload,
     RequirePermission,
     SessionDep,
+    require_project_access,
     verify_project_access,
 )
 from app.modules.boq.schemas import (
@@ -991,7 +992,7 @@ async def get_boq_activity(
     "/projects/{project_id}/activity/",
     response_model=ActivityLogList,
     summary="Get project activity log",
-    dependencies=[Depends(RequirePermission("boq.read"))],
+    dependencies=[Depends(RequirePermission("boq.read")), Depends(require_project_access)],
 )
 async def get_project_activity(
     project_id: uuid.UUID,

@@ -19,7 +19,7 @@ import uuid
 
 from fastapi import APIRouter, Depends, Query
 
-from app.dependencies import CurrentUserId, CurrentUserPayload, SessionDep
+from app.dependencies import CurrentUserId, CurrentUserPayload, SessionDep, require_project_access
 from app.modules.cde.schemas import (
     CDEStatsResponse,
     ContainerCreate,
@@ -125,7 +125,7 @@ async def list_suitability_codes() -> SuitabilityCodesResponse:
 # ── Stats ────────────────────────────────────────────────────────────────────
 
 
-@router.get("/stats/", response_model=CDEStatsResponse)
+@router.get("/stats/", response_model=CDEStatsResponse, dependencies=[Depends(require_project_access)])
 async def cde_stats(
     _user_id: CurrentUserId,
     project_id: uuid.UUID = Query(...),
@@ -142,7 +142,7 @@ async def cde_stats(
 # ── Container List ────────────────────────────────────────────────────────────
 
 
-@router.get("/containers/", response_model=list[ContainerResponse])
+@router.get("/containers/", response_model=list[ContainerResponse], dependencies=[Depends(require_project_access)])
 async def list_containers(
     project_id: uuid.UUID = Query(...),
     user_id: CurrentUserId = None,  # type: ignore[assignment]

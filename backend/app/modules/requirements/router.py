@@ -28,7 +28,13 @@ from fastapi.responses import JSONResponse, StreamingResponse
 from pydantic import BaseModel
 from sqlalchemy import select
 
-from app.dependencies import CurrentUserId, RequirePermission, SessionDep
+from app.dependencies import (
+    CurrentUserId,
+    RequirePermission,
+    SessionDep,
+    require_project_access,
+    require_project_access_if_given,
+)
 from app.modules.requirements.schemas import (
     GateResultResponse,
     RequirementBulkDeleteRequest,
@@ -146,7 +152,7 @@ def _set_to_detail(item: object) -> RequirementSetDetail:
 # ── Stats ───────────────────────────────────────────────────────────────────
 
 
-@router.get("/stats/", response_model=RequirementStats)
+@router.get("/stats/", response_model=RequirementStats, dependencies=[Depends(require_project_access)])
 async def get_stats(
     project_id: uuid.UUID = Query(...),
     user_id: CurrentUserId = None,  # type: ignore[assignment]
@@ -184,7 +190,7 @@ async def create_set(
 # ── List sets ───────────────────────────────────────────────────────────────
 
 
-@router.get("/", response_model=list[RequirementSetResponse])
+@router.get("/", response_model=list[RequirementSetResponse], dependencies=[Depends(require_project_access)])
 async def list_sets(
     project_id: uuid.UUID = Query(...),
     user_id: CurrentUserId = None,  # type: ignore[assignment]
@@ -593,6 +599,7 @@ async def link_requirement_to_bim(
 @router.get(
     "/by-bim-element/",
     response_model=list[RequirementResponse],
+    dependencies=[Depends(require_project_access_if_given)],
 )
 async def list_requirements_by_bim_element(
     _user_id: CurrentUserId,
