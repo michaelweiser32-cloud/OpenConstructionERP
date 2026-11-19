@@ -13,8 +13,9 @@
 #   * "Lite" runtime defaults for 512 MB: one worker, small DB pool,
 #     no vector backfill, no demo data, no cost-database preload (the
 #     CWICR cost databases are imported on demand from the UI).
-#   * All mutable state (SQLite DB, uploads, caches) lives under /data so
-#     a single persistent disk mounted there is the whole upgrade path.
+#   * Mutable state (SQLite DB, document/photo uploads, caches) lives under
+#     /data (HOME=/data). Exception: with STORAGE_BACKEND=local, BIM/CAD
+#     blobs go to /app/data/bim — use STORAGE_BACKEND=s3 for durable files.
 #
 # Build & run locally:
 #   docker build -t oce-render -f deploy/docker/Dockerfile.render .
@@ -51,13 +52,18 @@ WORKDIR /app
 COPY backend/ backend/
 COPY --from=frontend-build /build/dist backend/app/_frontend_dist/
 
-# Base deps + PostgreSQL drivers only. Celery/Redis/boto3 and the heavy
+# Base deps + PostgreSQL drivers + aioboto3. Celery/Redis and the heavy
 # vector / ML extras are deliberately left out to keep the image and RSS
 # small; install them in a derived image if you need them.
+# aioboto3 powers STORAGE_BACKEND=s3 (app/core/storage.py): without it the
+# S3 backend cannot start, and uploads stay on the ephemeral container disk.
+# It is imported only when the S3 backend is selected, so it costs nothing
+# at runtime with the default STORAGE_BACKEND=local.
 # hatch force-includes ../frontend/dist; the app itself serves the copy in
 # backend/app/_frontend_dist (run with --app-dir), so an empty dir suffices.
 RUN mkdir -p /app/frontend/dist \
-    && pip install --no-cache-dir "./backend" "asyncpg>=0.30.0" "psycopg2-binary>=2.9.10"
+    && pip install --no-cache-dir "./backend" "asyncpg>=0.30.0" "psycopg2-binary>=2.9.10" \
+        "aioboto3>=12.0.0"
 
 # Reference catalogs used by on-demand enrichment / demo data.
 COPY data/ data/
@@ -90,6 +96,7 @@ ENV PYTHONUNBUFFERED=1 \
     SEED_DEMO=false \
     ALLOW_SELF_REGISTRATION=false \
     ALLOW_FIRST_USER_ADMIN=false \
+    STORAGE_BACKEND=local \
     ALLOWED_HOSTS="*" \
     CORS_ORIGIN_REGEX=none
 

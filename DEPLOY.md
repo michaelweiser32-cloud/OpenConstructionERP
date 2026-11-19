@@ -20,14 +20,15 @@ Contents
 2. [Create the database on Neon](#2-create-the-database-on-neon)
 3. [Deploy the app on Render](#3-deploy-the-app-on-render)
 4. [First login and day-to-day use](#4-first-login-and-day-to-day-use)
-5. [Environment variable reference](#5-environment-variable-reference)
-6. ["Lite" mode for 512 MB](#6-lite-mode-for-512-mb)
-7. [Demo accounts on a public URL](#7-demo-accounts-on-a-public-url)
-8. [Upgrade paths (persistent disk, VPS)](#8-upgrade-paths-persistent-disk-vps)
-9. [Run it locally / on a VPS with bundled PostgreSQL](#9-run-it-locally--on-a-vps-with-bundled-postgresql)
-10. [Existing databases & migrations](#10-existing-databases--migrations)
-11. [Security checklist](#11-security-checklist)
-12. [Troubleshooting](#12-troubleshooting)
+5. [Durable file storage (S3-compatible bucket)](#5-durable-file-storage-s3-compatible-bucket)
+6. [Environment variable reference](#6-environment-variable-reference)
+7. ["Lite" mode for 512 MB](#7-lite-mode-for-512-mb)
+8. [Demo accounts on a public URL](#8-demo-accounts-on-a-public-url)
+9. [Upgrade paths (persistent disk, VPS)](#9-upgrade-paths-persistent-disk-vps)
+10. [Run it locally / on a VPS with bundled PostgreSQL](#10-run-it-locally--on-a-vps-with-bundled-postgresql)
+11. [Existing databases & migrations](#11-existing-databases--migrations)
+12. [Security checklist](#12-security-checklist)
+13. [Troubleshooting](#13-troubleshooting)
 
 ---
 
@@ -40,8 +41,8 @@ Contents
   roughly **1 minute** while it starts again (Render shows a loading page).
 - **The container filesystem is ephemeral**: anything written to local disk
   is **lost on every spin-down, restart and redeploy**. That is why the
-  database must live on Neon. Uploaded files (documents, photos, CAD/BIM
-  models) are still stored on local disk in this setup — see
+  database must live on Neon. Uploaded files are stored on local disk
+  unless you configure a bucket — see
   [Known limitation: uploaded files](#known-limitation-uploaded-files).
 - 750 free instance-hours per month per workspace (enough for one service
   running all month).
@@ -60,18 +61,21 @@ Contents
 
 **What survives what**
 
-| Event | Data in Neon (projects, BOQs, users…) | Uploaded files on local disk |
-|---|---|---|
-| Render spin-down / wake-up | ✅ kept | ❌ lost |
-| Redeploy / restart | ✅ kept | ❌ lost |
-| No `DATABASE_URL` set (SQLite fallback) | ❌ **everything lost** | ❌ lost |
+| Event | Data in Neon (projects, BOQs, users…) | Files on local disk (`STORAGE_BACKEND=local`) | BIM/CAD files in an S3 bucket (`STORAGE_BACKEND=s3`) |
+|---|---|---|---|
+| Render spin-down / wake-up | ✅ kept | ❌ lost | ✅ kept |
+| Redeploy / restart | ✅ kept | ❌ lost | ✅ kept |
+| No `DATABASE_URL` set (SQLite fallback) | ❌ **everything lost** | ❌ lost | ⚠️ files kept, but the database rows pointing at them are lost |
 
 ### Known limitation: uploaded files
 
-Until you add a persistent disk or S3-compatible storage
-([§8](#8-upgrade-paths-persistent-disk-vps)), treat the free deployment as
-"structured data only": projects, BOQs, cost data, schedules, tasks and
-users are durable in Neon; file attachments are not.
+Projects, BOQs, cost data, schedules, tasks and users are durable in
+Neon. For **files**, read [§5](#5-durable-file-storage-s3-compatible-bucket):
+an S3 bucket makes **BIM/CAD model files** durable today, while
+**documents, photos, takeoff PDFs, DWG drawings, meeting transcripts and
+punch-list photos** are still written to the local disk and are lost on
+restart even with a bucket configured. Until that is wired up, treat the
+free deployment as "structured data + BIM models".
 
 ---
 
@@ -147,7 +151,7 @@ You need: a GitHub account with this fork, and a Render account
    - *Dockerfile Path*: `./deploy/docker/Dockerfile.render`
    - *Docker Build Context Directory*: `.`
    - *Instance Type*: **Free**
-3. **Environment Variables** → add (see [§5](#5-environment-variable-reference)):
+3. **Environment Variables** → add (see [§6](#6-environment-variable-reference)):
    - `JWT_SECRET` → click **Generate** (or paste the output of
      `python3 -c "import secrets; print(secrets.token_urlsafe(48))"`)
    - `ADMIN_EMAIL`, `ADMIN_PASSWORD`
@@ -179,11 +183,80 @@ and deploy* for env-only changes). Secrets are never shown in logs.
   hours and Neon CU-hours — not recommended.
 - Cost databases (CWICR) are **not** preloaded. Import the region(s) you
   need from the Cost Database screen. On 512 MB, import one region at a
-  time; very large imports may exceed the free RAM (see [§6](#6-lite-mode-for-512-mb)).
+  time; very large imports may exceed the free RAM (see [§7](#7-lite-mode-for-512-mb)).
 
 ---
 
-## 5. Environment variable reference
+## 5. Durable file storage (S3-compatible bucket)
+
+Render's free disk is wiped on every spin-down, restart and redeploy, so
+uploaded files need to live somewhere else. The app has a built-in
+storage layer (`backend/app/core/storage.py`) that can write files to any
+**S3-compatible bucket** (AWS S3, Cloudflare R2, Backblaze B2, a MinIO
+server you run yourself, …). The Render image ships the S3 client
+(`aioboto3`) for this.
+
+**What it covers today** (be precise about this before relying on it):
+
+| Upload type | Goes to the bucket with `STORAGE_BACKEND=s3`? |
+|---|---|
+| BIM/CAD models: geometry (`.glb` / `.dae` / `.gltf`) and the original upload (`.ifc`, `.rvt`, …) | ✅ yes |
+| Documents, photos and photo thumbnails, PDF sheet thumbnails | ❌ not yet — local disk (`/data/.openestimator/…`) |
+| Takeoff PDFs, DWG/DXF drawings, meeting transcripts, punch-list photos | ❌ not yet — local disk |
+| BIM element property tables (`elements.parquet`) | ❌ not yet — local disk; rebuilt by re-uploading the model |
+
+Moving the remaining upload types onto the same storage layer is the next
+follow-up (listed in the pull request).
+
+### Settings
+
+| Variable | Value |
+|---|---|
+| `STORAGE_BACKEND` | `local` (default) or `s3` |
+| `S3_ENDPOINT` | Provider endpoint URL, e.g. `https://<account-id>.r2.cloudflarestorage.com` or `https://s3.<region>.backblazeb2.com`. Leave empty for AWS S3. |
+| `S3_ACCESS_KEY` / `S3_SECRET_KEY` | An access key **scoped to this one bucket** with read + write + delete + list. Never your account's root key. |
+| `S3_BUCKET` | Bucket name. |
+| `S3_REGION` | Provider region, e.g. `us-east-1`; Cloudflare R2 uses `auto`. |
+| `S3_PRESIGNED_DOWNLOADS` | `false` (default). See "Privacy" below. |
+
+Leave `STORAGE_BACKEND=local` and the `S3_*` values empty for a demo
+(files are lost on restart). For real use:
+
+1. At your S3-compatible provider, create a **private** bucket (no public
+   access, no website hosting) and an access key limited to that bucket.
+   Providers' free allowances and sign-up requirements (some ask for a
+   card) change often — check them on the provider's own pricing page.
+2. Render → your service → **Environment** → set `STORAGE_BACKEND=s3` and
+   fill `S3_ENDPOINT`, `S3_ACCESS_KEY`, `S3_SECRET_KEY`, `S3_BUCKET`,
+   `S3_REGION` → **Save, rebuild and deploy**. (With the Blueprint, the
+   `S3_*` fields are prompted for when you create it.)
+3. Check the deploy log for `Blob storage: S3 bucket '…'`. The app
+   **refuses to start** if the bucket is unreachable or the credentials
+   are wrong, rather than silently writing to the ephemeral disk.
+
+### Privacy
+
+- Files are uploaded **without any public ACL**; the bucket stays private.
+- By default the app **streams files through its own authenticated
+  routes** — browsers never receive a bucket URL, the bucket needs no CORS
+  rules, and the app's Content-Security-Policy (`connect-src 'self'`)
+  stays intact.
+- `S3_PRESIGNED_DOWNLOADS=true` makes the 3D-viewer geometry route
+  redirect to a short-lived (1 hour) presigned URL instead, which saves
+  app bandwidth on large models. It only works if you also allow the
+  bucket origin in the bucket's CORS rules and in the app's CSP; leave it
+  off unless you need it.
+
+### Existing files
+
+Switching from `local` to `s3` does not copy existing files. On Render
+free there is nothing to copy (the disk was already wiped). On a VPS,
+copy `/app/data/bim/` into the bucket under the same `bim/…` keys
+(e.g. with `aws s3 sync` or `rclone`) before switching.
+
+---
+
+## 6. Environment variable reference
 
 Only `JWT_SECRET` is strictly required. Everything else has a safe
 default baked into `deploy/docker/Dockerfile.render`.
@@ -204,10 +277,13 @@ default baked into `deploy/docker/Dockerfile.render`.
 | `ALLOW_FIRST_USER_ADMIN` | no | `false` | "First registered user becomes admin" bootstrap — keep off on public URLs. |
 | `DISABLE_DEMO_ACCOUNTS` | no | `1` (in `render.yaml`) | `1` = no demo accounts; also deactivates existing ones. |
 | `SEED_DEMO` | no | `false` | Create demo accounts + 5 demo projects. |
-| `DEMO_ADMIN_PASSWORD` / `DEMO_ESTIMATOR_PASSWORD` / `DEMO_MANAGER_PASSWORD` | when demo on | — | See [§7](#7-demo-accounts-on-a-public-url). |
+| `DEMO_ADMIN_PASSWORD` / `DEMO_ESTIMATOR_PASSWORD` / `DEMO_MANAGER_PASSWORD` | when demo on | — | See [§8](#8-demo-accounts-on-a-public-url). |
 | `WEB_CONCURRENCY` | no | `1` | Uvicorn workers. Keep `1` on 512 MB. |
 | `DATABASE_POOL_SIZE` / `DATABASE_MAX_OVERFLOW` | no | `5` / `5` | PostgreSQL pool. |
 | `LOGIN_RATE_LIMIT` / `API_RATE_LIMIT` / `AI_RATE_LIMIT` | no | `50` / `300` / `30` per minute | Rate limits (per client IP / user). |
+| `STORAGE_BACKEND` | no | `local` | `s3` = BIM/CAD files in an S3-compatible bucket; see [§5](#5-durable-file-storage-s3-compatible-bucket). |
+| `S3_ENDPOINT` / `S3_ACCESS_KEY` / `S3_SECRET_KEY` / `S3_BUCKET` / `S3_REGION` | when `s3` | — | Bucket connection; startup fails if unreachable. |
+| `S3_PRESIGNED_DOWNLOADS` | no | `false` | Redirect geometry downloads to presigned bucket URLs (needs bucket CORS + CSP change). |
 | `OE_SKIP_MIGRATIONS` | no | `0` | `1` skips the boot-time migration step. |
 | `DATABASE_PGBOUNCER` | no | auto for `-pooler` hosts | Force PgBouncer-safe asyncpg settings for other poolers. |
 
@@ -216,7 +292,7 @@ encrypted in the database) — you do not need to put them in env vars.
 
 ---
 
-## 6. "Lite" mode for 512 MB
+## 7. "Lite" mode for 512 MB
 
 The Render image **is** the lite mode — nothing heavy happens at boot:
 
@@ -237,7 +313,7 @@ CAD/BIM uploads are the operations most likely to hit the 512 MB ceiling.
 
 ---
 
-## 7. Demo accounts on a public URL
+## 8. Demo accounts on a public URL
 
 Demo accounts (`demo@`, `estimator@`, `manager@openestimator.io`) use
 e-mail addresses published in this repository, so on a public URL they
@@ -258,30 +334,31 @@ are only safe with passwords that only you know.
 
 ---
 
-## 8. Upgrade paths (persistent disk, VPS)
+## 9. Upgrade paths (persistent disk, VPS)
 
 When the free tier is not enough, in rough order of effort:
 
 1. **Render Starter (~$7/month)** — no spin-down, more RAM options, and you
    can attach a **persistent disk**: service → **Disks** → mount path
-   `/data` (all local state — uploads, caches, SQLite if used — lives
-   there because the image sets `HOME=/data`). Keep Neon for the database
-   or move to a paid Render Postgres.
+   `/data`. Document/photo uploads, caches and SQLite (if used) live there
+   because the image sets `HOME=/data`; BIM/CAD files on the local backend
+   live in `/app/data/bim`, so use `STORAGE_BACKEND=s3` for those (or mount
+   a second disk there). Keep Neon for the database or move to a paid
+   Render Postgres.
 2. **Small VPS + Docker Compose** (any provider, a few $/month): use
-   `docker-compose.prod.yml` (bundled PostgreSQL, see [§9](#9-run-it-locally--on-a-vps-with-bundled-postgresql))
+   `docker-compose.prod.yml` (bundled PostgreSQL, see [§10](#10-run-it-locally--on-a-vps-with-bundled-postgresql))
    or run this image with `-v oe_data:/data`. Put Caddy or nginx in front
    for HTTPS.
 3. **Oracle Cloud Always Free** — free ARM VMs with plenty of RAM, but
    sign-up **requires a credit card** for identity verification.
-4. **Object storage for uploads** — the backend supports
-   `STORAGE_BACKEND=s3` (`S3_ENDPOINT`, `S3_ACCESS_KEY`, `S3_SECRET_KEY`,
-   `S3_BUCKET`) for BIM/CAD blobs; wiring every upload type to S3 is a
-   follow-up (see the PR's follow-up list).
+4. **Object storage for uploads** — `STORAGE_BACKEND=s3` with any
+   S3-compatible bucket ([§5](#5-durable-file-storage-s3-compatible-bucket)).
+   Covers BIM/CAD files today; the other upload types are a follow-up.
 5. **Bigger Neon plan** if you outgrow 1 GB / 100 CU-hours.
 
 ---
 
-## 9. Run it locally / on a VPS with bundled PostgreSQL
+## 10. Run it locally / on a VPS with bundled PostgreSQL
 
 **Same image as Render, locally:**
 
@@ -315,7 +392,7 @@ throw-away demo credentials) — never expose it to the internet.
 
 ---
 
-## 10. Existing databases & migrations
+## 11. Existing databases & migrations
 
 On every boot the container runs `python -m app.scripts.db_migrate`
 **before** the web server starts. It never drops or rewrites data:
@@ -342,7 +419,7 @@ current free-plan limits on neon.com); for your own copy run
 
 ---
 
-## 11. Security checklist
+## 12. Security checklist
 
 What this setup enforces:
 
@@ -362,6 +439,9 @@ What this setup enforces:
       `Server` header.
 - [x] CORS: no wildcard; no blanket `*.vercel.app` regex outside dev.
 - [x] Optional Host allowlist (`ALLOWED_HOSTS`).
+- [x] S3 file storage (when enabled) keeps the bucket private: no public
+      ACLs, files streamed through authenticated routes, presigned URLs
+      opt-in only; startup fails on a missing `aioboto3` or unreachable bucket.
 - [x] Previously unauthenticated read endpoints (BCF/OpenCDE project &
       topic listings, team listings, CDE stats) now require login.
 
@@ -371,7 +451,7 @@ tokens) and decide whether those matter for your use.
 
 ---
 
-## 12. Troubleshooting
+## 13. Troubleshooting
 
 | Symptom | Fix |
 |---|---|
@@ -382,4 +462,7 @@ tokens) and decide whether those matter for your use.
 | `Invalid host header` | `ALLOWED_HOSTS` doesn't list the hostname you used; add it or set `*`. |
 | Registration says "disabled on this server" | Expected — see [§4](#4-first-login-and-day-to-day-use). |
 | Instance restarted with "out of memory" | A big import exceeded 512 MB; import smaller chunks or upgrade the instance. |
+| `FATAL: STORAGE_BACKEND=s3 but the 'aioboto3' package is not installed` | You are not using `Dockerfile.render`; install `aioboto3>=12.0.0` or set `STORAGE_BACKEND=local`. |
+| `FATAL: S3 bucket '…' is not reachable` | Check `S3_ENDPOINT` (full `https://…` URL), `S3_REGION`, `S3_BUCKET` and that the key may access that bucket. |
+| Uploaded documents/photos gone after a restart | Expected on Render free: those upload types are not on S3 yet ([§5](#5-durable-file-storage-s3-compatible-bucket)). |
 | First request is slow | Render free spin-down (≈1 min wake-up). Expected. |

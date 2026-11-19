@@ -1390,6 +1390,20 @@ def create_app() -> FastAPI:
         # `relation "oe_users_user" does not exist` (issue #42).
         # SQLAlchemy create_all is idempotent on PG and harmless on existing
         # databases — it only creates tables that do not yet exist.
+        # Blob storage: fail fast when STORAGE_BACKEND=s3 is misconfigured
+        # (missing aioboto3, unreachable bucket) instead of failing uploads.
+        _section("Storage")
+        from app.core.storage import validate_storage_backend
+
+        _storage_desc = await validate_storage_backend(settings)
+        logger.info("Blob storage: %s", _storage_desc)
+        if settings.storage_backend == "local" and settings.app_env != "development":
+            logger.warning(
+                "STORAGE_BACKEND=local: uploaded files live on this machine's disk. "
+                "On hosts with an ephemeral filesystem (e.g. Render free) they are lost "
+                "on restart — see DEPLOY.md 'Durable file storage'."
+            )
+
         _section("Database")
         if "sqlite" in settings.database_url or "postgresql" in settings.database_url:
             # SQLite auto-migration: add missing columns before create_all

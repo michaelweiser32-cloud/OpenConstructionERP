@@ -108,6 +108,12 @@ class Settings(BaseSettings):
     s3_secret_key: str = ""
     s3_bucket: str = "openestimate"
     s3_region: str = "us-east-1"
+    # Off by default: the app streams S3 blobs through its own (authenticated)
+    # routes, so the bucket stays fully private, needs no CORS rules and the
+    # SPA's CSP (connect-src 'self') is not violated. Turn on only if you
+    # allow the bucket origin in CORS + CSP and accept short-lived presigned
+    # URLs being handed to browsers (offloads large downloads from the app).
+    s3_presigned_downloads: bool = False
 
     # ── Auth ─────────────────────────────────────────────────────────────
     jwt_secret: str = "openestimate-local-dev-key"

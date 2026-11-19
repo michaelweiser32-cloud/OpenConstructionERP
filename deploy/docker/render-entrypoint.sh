@@ -64,6 +64,19 @@ fi
 # DATABASE_SYNC_URL may be omitted: the app derives it from DATABASE_URL
 # and normalises provider SSL parameters (sslmode / ssl / channel_binding).
 
+# ── 2b. File storage ─────────────────────────────────────────────────────
+case "${STORAGE_BACKEND:-local}" in
+    s3)
+        [ -n "${S3_BUCKET:-}" ] || die "STORAGE_BACKEND=s3 but S3_BUCKET is empty."
+        log "File storage: S3-compatible bucket (credentials not logged)" ;;
+    local)
+        if [ -n "${S3_BUCKET:-}" ]; then
+            log "WARNING: S3_BUCKET is set but STORAGE_BACKEND=local — the bucket is NOT used. Set STORAGE_BACKEND=s3."
+        fi
+        log "File storage: local disk. On an ephemeral filesystem (Render free) uploaded files are LOST on restart; see DEPLOY.md 'Durable file storage'." ;;
+    *) die "STORAGE_BACKEND must be 'local' or 's3' (got '${STORAGE_BACKEND}')." ;;
+esac
+
 # ── 3. Schema migration (idempotent, never destructive) ──────────────────
 if [ "${OE_SKIP_MIGRATIONS:-0}" != "1" ]; then
     log "Running database migrations…"

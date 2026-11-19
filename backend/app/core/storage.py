@@ -365,7 +365,27 @@ class S3StorageBackend(StorageBackend):
             aws_access_key_id=self._access_key or None,
             aws_secret_access_key=self._secret_key or None,
             region_name=self._region or None,
+            config=_s3_client_config(),
         )
+
+    async def check_ready(self) -> None:
+        """Verify the bucket exists and the credentials can reach it.
+
+        Raises :class:`RuntimeError` with an operator-facing message —
+        called at application startup so a misconfigured bucket fails
+        the deploy instead of failing every upload later.
+        """
+        if not self._bucket:
+            raise RuntimeError("STORAGE_BACKEND=s3 but S3_BUCKET is empty.")
+        async with self._client_ctx() as client:  # type: ignore[attr-defined]
+            try:
+                await client.head_bucket(Bucket=self._bucket)
+            except Exception as exc:
+                raise RuntimeError(
+                    f"S3 bucket {self._bucket!r} is not reachable at "
+                    f"{self._endpoint or 'AWS default endpoint'}: {exc}. Check S3_ENDPOINT, "
+                    "S3_REGION, S3_BUCKET and the access key's permissions."
+                ) from exc
 
     # -- public API -----------------------------------------------------
 
@@ -451,9 +471,15 @@ class S3StorageBackend(StorageBackend):
                 if _is_not_found(exc):
                     raise FileNotFoundError(f"No blob at key: {key}") from exc
                 raise
-            async with resp["Body"] as body:
+            # Read through aiobotocore's StreamingBody (``read(amt)``), not the
+            # object ``async with`` yields: on current aiobotocore that is the
+            # raw aiohttp ClientResponse, whose ``read()`` takes no size and
+            # would raise TypeError. The ``async with`` still releases the
+            # connection back to the pool when we are done.
+            stream = resp["Body"]
+            async with stream:
                 while True:
-                    chunk = await body.read(self._STREAM_CHUNK_SIZE)
+                    chunk = await stream.read(self._STREAM_CHUNK_SIZE)
                     if not chunk:
                         break
                     yield chunk
@@ -491,9 +517,41 @@ class S3StorageBackend(StorageBackend):
         )
 
 
+def _s3_client_config() -> object | None:
+    """Client config tuned for generic S3-compatible providers.
+
+    botocore >= 1.36 adds CRC checksums / ``aws-chunked`` uploads by
+    default ("data integrity protections"), which several S3-compatible
+    services have rejected. Only send checksums when the operation
+    requires them. Older botocore releases (pulled in by aioboto3 12.x)
+    do not know these options — fall back to the defaults there.
+    """
+    try:
+        from botocore.config import Config
+    except ImportError:  # pragma: no cover - aioboto3 always brings botocore
+        return None
+    try:
+        return Config(
+            request_checksum_calculation="when_required",
+            response_checksum_validation="when_required",
+        )
+    except TypeError:  # pragma: no cover - botocore < 1.36
+        return None
+
+
 def _is_not_found(exc: BaseException) -> bool:
-    """Best-effort ``404``/``NoSuchKey`` detection for aioboto3 errors."""
+    """Best-effort ``404``/``NoSuchKey`` detection for aioboto3 errors.
+
+    A missing *bucket* is deliberately NOT treated as a missing key: that
+    is a configuration error and must surface as such instead of looking
+    like an empty store.
+    """
+    resp = getattr(exc, "response", None)
+    if isinstance(resp, dict) and resp.get("Error", {}).get("Code") == "NoSuchBucket":
+        return False
     msg = str(exc)
+    if "NoSuchBucket" in msg:
+        return False
     if "NoSuchKey" in msg or "Not Found" in msg or "404" in msg:
         return True
     resp = getattr(exc, "response", None)
@@ -542,6 +600,35 @@ def build_storage_backend(settings: Settings) -> StorageBackend:
         )
 
     raise ValueError(f"Unknown storage backend {backend_name!r}. Expected one of: 'local', 's3'.")
+
+
+async def validate_storage_backend(settings: Settings) -> str:
+    """Fail fast on a broken storage configuration (called at startup).
+
+    * ``local`` — nothing to check; returns a description for the log.
+    * ``s3`` — the ``aioboto3`` package must be importable and the bucket
+      must be reachable with the configured credentials. Any problem
+      raises :class:`RuntimeError` with an operator-facing message, so a
+      deploy with ``STORAGE_BACKEND=s3`` never silently falls back to the
+      ephemeral local disk.
+    """
+    backend_name = (getattr(settings, "storage_backend", "local") or "local").lower()
+    if backend_name != "s3":
+        return f"local filesystem ({_default_local_base_dir()})"
+    try:
+        backend = build_storage_backend(settings)
+    except ImportError as exc:
+        raise RuntimeError(
+            "FATAL: STORAGE_BACKEND=s3 but the 'aioboto3' package is not installed. "
+            "Install it (pip install 'aioboto3>=12.0.0', or use "
+            "deploy/docker/Dockerfile.render which bundles it) or set STORAGE_BACKEND=local."
+        ) from exc
+    assert isinstance(backend, S3StorageBackend)
+    try:
+        await backend.check_ready()
+    except RuntimeError as exc:
+        raise RuntimeError(f"FATAL: {exc}") from exc
+    return f"S3 bucket {settings.s3_bucket!r} at {settings.s3_endpoint or 'AWS'}"
 
 
 @lru_cache(maxsize=1)

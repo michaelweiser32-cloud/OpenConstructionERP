@@ -4,6 +4,8 @@
 # Database: external PostgreSQL via DATABASE_URL (recommended: Neon free),
 # or nothing → SQLite on Render's EPHEMERAL disk (demo only, data is lost
 # on every spin-down / restart / redeploy).
+# Files: STORAGE_BACKEND=s3 + S3_* → BIM/CAD files in a private
+# S3-compatible bucket; otherwise uploads are on the ephemeral disk too.
 #
 # Step-by-step instructions: DEPLOY.md at the repository root.
 #
@@ -40,6 +42,27 @@ services:
       - key: DATABASE_URL
         sync: false
       - key: DATABASE_SYNC_URL
+        sync: false
+
+      # ── File storage (uploads: documents, photos, CAD/BIM) ───────────
+      # Leave STORAGE_BACKEND=local and the S3_* values empty → files go to
+      # the container's local disk: DEMO ONLY, every uploaded file is lost
+      # on each spin-down / restart / redeploy (Render free disk is
+      # ephemeral).
+      # Set STORAGE_BACKEND=s3 and fill the S3_* values → files go to a
+      # durable, private S3-compatible bucket (AWS S3, Cloudflare R2,
+      # Backblaze B2, MinIO, …). See DEPLOY.md "Durable file storage".
+      - key: STORAGE_BACKEND
+        value: local                 # "local" or "s3"
+      - key: S3_ENDPOINT             # e.g. https://<account>.r2.cloudflarestorage.com; empty = AWS
+        sync: false
+      - key: S3_ACCESS_KEY           # bucket-scoped key, read/write on ONE bucket only
+        sync: false
+      - key: S3_SECRET_KEY
+        sync: false
+      - key: S3_BUCKET               # keep the bucket PRIVATE (no public access)
+        sync: false
+      - key: S3_REGION               # e.g. us-east-1, auto (R2), eu-central-003 (B2)
         sync: false
 
       # ── Runtime / safety (defaults also baked into the image) ────────
