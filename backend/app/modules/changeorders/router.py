@@ -21,7 +21,7 @@ import uuid
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 
 from app.core.rate_limiter import approval_limiter
-from app.dependencies import CurrentUserId, RequirePermission, SessionDep
+from app.dependencies import CurrentUserId, RequirePermission, SessionDep, require_project_access
 from app.modules.changeorders.schemas import (
     ChangeOrderCreate,
     ChangeOrderItemCreate,
@@ -148,7 +148,7 @@ def _item_to_response(item: object) -> ChangeOrderItemResponse:
 # ── Summary ──────────────────────────────────────────────────────────────────
 
 
-@router.get("/summary/", response_model=ChangeOrderSummary)
+@router.get("/summary/", response_model=ChangeOrderSummary, dependencies=[Depends(require_project_access)])
 async def get_summary(
     project_id: uuid.UUID = Query(...),
     user_id: CurrentUserId = None,  # type: ignore[assignment]
@@ -186,7 +186,7 @@ async def create_change_order(
 # ── List ─────────────────────────────────────────────────────────────────────
 
 
-@router.get("/", response_model=list[ChangeOrderResponse])
+@router.get("/", response_model=list[ChangeOrderResponse], dependencies=[Depends(require_project_access)])
 async def list_change_orders(
     project_id: uuid.UUID = Query(...),
     user_id: CurrentUserId = None,  # type: ignore[assignment]

@@ -47,7 +47,13 @@ from pydantic import BaseModel, Field
 from sqlalchemy import delete, select
 
 from app.core.rate_limiter import upload_limiter
-from app.dependencies import CurrentUserId, RequirePermission, SessionDep
+from app.dependencies import (
+    CurrentUserId,
+    RequirePermission,
+    SessionDep,
+    require_project_access,
+    require_project_access_if_given,
+)
 from app.modules.takeoff.models import CadExtractionSession
 from app.modules.takeoff.schemas import (
     LinkToBoqRequest,
@@ -1982,7 +1988,7 @@ async def cad_data_save(
 
 @router.get(
     "/cad-data/sessions/",
-    dependencies=[Depends(RequirePermission("takeoff.read"))],
+    dependencies=[Depends(RequirePermission("takeoff.read")), Depends(require_project_access_if_given)],
 )
 async def cad_data_list_sessions(
     project_id: str | None = Query(default=None),
@@ -2302,7 +2308,7 @@ async def upload_document(
 
 @router.get(
     "/documents/",
-    dependencies=[Depends(RequirePermission("takeoff.read"))],
+    dependencies=[Depends(RequirePermission("takeoff.read")), Depends(require_project_access_if_given)],
 )
 async def list_documents(
     user_id: CurrentUserId,
@@ -2611,7 +2617,7 @@ def _measurement_to_response(item: object) -> TakeoffMeasurementResponse:
 @router.get(
     "/measurements/summary/",
     response_model=TakeoffMeasurementSummary,
-    dependencies=[Depends(RequirePermission("takeoff.read"))],
+    dependencies=[Depends(RequirePermission("takeoff.read")), Depends(require_project_access)],
 )
 async def measurement_summary(
     project_id: _uuid.UUID = Query(...),
@@ -2628,7 +2634,7 @@ async def measurement_summary(
 
 @router.get(
     "/measurements/export/",
-    dependencies=[Depends(RequirePermission("takeoff.read"))],
+    dependencies=[Depends(RequirePermission("takeoff.read")), Depends(require_project_access)],
 )
 async def export_measurements(
     project_id: _uuid.UUID = Query(...),
@@ -2722,7 +2728,7 @@ async def create_measurement(
 @router.get(
     "/measurements/",
     response_model=list[TakeoffMeasurementResponse],
-    dependencies=[Depends(RequirePermission("takeoff.read"))],
+    dependencies=[Depends(RequirePermission("takeoff.read")), Depends(require_project_access)],
 )
 async def list_measurements(
     project_id: _uuid.UUID = Query(...),

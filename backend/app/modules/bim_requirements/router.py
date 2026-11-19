@@ -17,7 +17,7 @@ import uuid
 from fastapi import APIRouter, Depends, File, Query, UploadFile
 from fastapi.responses import Response
 
-from app.dependencies import CurrentUserId, RequirePermission, SessionDep
+from app.dependencies import CurrentUserId, RequirePermission, SessionDep, require_project_access
 from app.modules.bim_requirements.schemas import (
     BIMRequirementResponse,
     BIMRequirementSetDetail,
@@ -140,7 +140,7 @@ async def import_requirements_file(
 # ── List sets ──────────────────────────────────────────────────────────────
 
 
-@router.get("/sets/", response_model=list[BIMRequirementSetResponse])
+@router.get("/sets/", response_model=list[BIMRequirementSetResponse], dependencies=[Depends(require_project_access)])
 async def list_sets(
     project_id: uuid.UUID = Query(...),
     offset: int = Query(default=0, ge=0),

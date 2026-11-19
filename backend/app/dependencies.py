@@ -407,6 +407,33 @@ async def verify_project_access(
         )
 
 
+async def require_project_access(
+    project_id: _uuid.UUID,
+    user_id: Annotated[str, Depends(get_current_user_id)],
+    session: Annotated[AsyncSession, Depends(get_session)],
+) -> None:
+    """Route dependency: the caller must be able to access ``project_id``.
+
+    Reads ``project_id`` from the route's own path or query parameter (same
+    name, same value), so it can be attached without touching the handler:
+    ``@router.get(..., dependencies=[Depends(require_project_access)])``.
+    Same rule and responses as :func:`verify_project_access` (owner or
+    admin; otherwise 404 so foreign project UUIDs are not confirmed).
+    """
+    await verify_project_access(project_id, user_id, session)
+
+
+async def require_project_access_if_given(
+    user_id: Annotated[str, Depends(get_current_user_id)],
+    session: Annotated[AsyncSession, Depends(get_session)],
+    project_id: _uuid.UUID | None = None,
+) -> None:
+    """Like :func:`require_project_access` for routes where ``project_id``
+    is an optional filter: checked whenever the caller supplies one."""
+    if project_id is not None:
+        await verify_project_access(project_id, user_id, session)
+
+
 # ── Convenience type aliases ───────────────────────────────────────────────
 
 SessionDep = Annotated[AsyncSession, Depends(get_session)]

@@ -21,7 +21,13 @@ from fastapi import APIRouter, Depends, Query
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.dependencies import CurrentUserId, RequirePermission, SessionDep
+from app.dependencies import (
+    CurrentUserId,
+    RequirePermission,
+    SessionDep,
+    require_project_access,
+    require_project_access_if_given,
+)
 from app.modules.contacts.models import Contact
 from app.modules.procurement.models import PurchaseOrder
 from app.modules.procurement.schemas import (
@@ -82,7 +88,7 @@ def _po_to_response(po: PurchaseOrder, vendor_names: dict[str, str]) -> PORespon
 @router.get(
     "/",
     response_model=POListResponse,
-    dependencies=[Depends(RequirePermission("procurement.read"))],
+    dependencies=[Depends(RequirePermission("procurement.read")), Depends(require_project_access_if_given)],
 )
 async def list_purchase_orders(
     user_id: CurrentUserId,
@@ -135,7 +141,7 @@ async def create_purchase_order(
 @router.get(
     "/stats/",
     response_model=ProcurementStatsResponse,
-    dependencies=[Depends(RequirePermission("procurement.read"))],
+    dependencies=[Depends(RequirePermission("procurement.read")), Depends(require_project_access)],
 )
 async def procurement_stats(
     user_id: CurrentUserId,

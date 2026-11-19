@@ -28,6 +28,7 @@ import {
   CheckSquare,
 } from 'lucide-react';
 import { Card, Button, Badge, EmptyState, Breadcrumb } from '@/shared/ui';
+import { AuthedImg } from '@/shared/ui/AuthedImg';
 import { apiGet } from '@/shared/lib/api';
 import { useToastStore } from '@/stores/useToastStore';
 import { useProjectContextStore } from '@/stores/useProjectContextStore';
@@ -239,7 +240,7 @@ function Lightbox({
         className="relative max-w-[90vw] max-h-[85vh] flex flex-col"
         onClick={(e) => e.stopPropagation()}
       >
-        <img
+        <AuthedImg
           src={getPhotoFileUrl(photo.id)}
           alt={photo.caption || photo.filename}
           className="max-w-full max-h-[70vh] object-contain rounded-lg"
@@ -383,7 +384,7 @@ function EditPhotoModal({
         <div className="p-5 space-y-4">
           {/* Thumbnail */}
           <div className="flex justify-center">
-            <img
+            <AuthedImg
               src={getPhotoThumbUrl(photo.id)}
               alt={photo.filename}
               className="h-32 w-auto rounded-lg object-cover"
@@ -499,7 +500,7 @@ function PhotoCard({
       onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); selectMode ? onToggleSelect?.() : onClick(); } }}
       aria-label={photo.caption || photo.filename}
     >
-      <img
+      <AuthedImg
         src={getPhotoThumbUrl(photo.id)}
         alt={photo.caption || photo.filename}
         className="h-full w-full object-cover transition-transform duration-300 group-hover:scale-105"

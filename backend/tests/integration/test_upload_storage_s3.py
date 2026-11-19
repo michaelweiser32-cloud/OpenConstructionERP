@@ -444,7 +444,7 @@ class TestPhotos:
         assert thumb.status_code == 200
         assert thumb.headers["content-type"] == "image/jpeg"
         assert thumb.content[:3] == b"\xff\xd8\xff"
-        assert thumb.headers["cache-control"] == "public, max-age=86400"
+        assert thumb.headers["cache-control"] == "private, max-age=86400"
 
         dele = await client.delete(f"/api/v1/documents/photos/{photo['id']}", headers=auth)
         assert dele.status_code == 204

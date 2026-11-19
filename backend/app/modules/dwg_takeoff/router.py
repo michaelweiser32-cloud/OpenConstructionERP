@@ -29,7 +29,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, UploadFile, status
 from fastapi.responses import Response
 
 from app.core.rate_limiter import approval_limiter
-from app.dependencies import CurrentUserId, RequirePermission, SessionDep
+from app.dependencies import CurrentUserId, RequirePermission, SessionDep, require_project_access
 from app.modules.dwg_takeoff.schemas import (
     BoqLinkRequest,
     DwgAnnotationCreate,
@@ -192,7 +192,7 @@ async def upload_drawing(
 # ── Drawing CRUD ────────────────────────────────────────────────────────────
 
 
-@router.get("/drawings/", response_model=list[DwgDrawingResponse])
+@router.get("/drawings/", response_model=list[DwgDrawingResponse], dependencies=[Depends(require_project_access)])
 async def list_drawings(
     project_id: uuid.UUID = Query(...),
     status_filter: Literal["uploaded", "processing", "ready", "error"] | None = Query(default=None, alias="status"),

@@ -24,7 +24,7 @@ import uuid
 
 from fastapi import APIRouter, Depends
 
-from app.dependencies import CurrentUserId, SessionDep
+from app.dependencies import CurrentUserId, SessionDep, verify_project_access
 from app.modules.opencde_api.schemas import (
     BCFComment,
     BCFCommentCreate,
@@ -107,21 +107,21 @@ async def foundation_current_user(
 
 @router.get("/bcf/3.0/projects/", response_model=list[BCFProject])
 async def bcf_list_projects(
-    _user_id: CurrentUserId,
+    user_id: CurrentUserId,
     service: OpenCDEService = Depends(_get_service),
 ) -> list[BCFProject]:
-    """List all projects in BCF format."""
-    return await service.list_projects()
+    """List the caller's projects in BCF format (admins: all projects)."""
+    return await service.list_projects(user_id)
 
 
 @router.get("/bcf/3.0/projects/{project_id}", response_model=BCFProject)
 async def bcf_get_project(
     project_id: uuid.UUID,
-    _user_id: CurrentUserId,
+    user_id: CurrentUserId,
     service: OpenCDEService = Depends(_get_service),
 ) -> BCFProject:
     """Get a single project in BCF format."""
-    return await service.get_project(project_id)
+    return await service.get_project(project_id, user_id)
 
 
 # ══════════════════════════════════════════════════════════════════════════
@@ -135,10 +135,11 @@ async def bcf_get_project(
 )
 async def bcf_list_topics(
     project_id: uuid.UUID,
-    _user_id: CurrentUserId,
+    user_id: CurrentUserId,
     service: OpenCDEService = Depends(_get_service),
 ) -> list[BCFTopic]:
     """List BCF topics for a project."""
+    await verify_project_access(project_id, user_id, service.session)
     return await service.list_topics(project_id)
 
 
@@ -154,6 +155,7 @@ async def bcf_create_topic(
     service: OpenCDEService = Depends(_get_service),
 ) -> BCFTopic:
     """Create a new BCF topic."""
+    await verify_project_access(project_id, user_id, service.session)
     return await service.create_topic(project_id, data, uuid.UUID(user_id))
 
 
@@ -164,10 +166,11 @@ async def bcf_create_topic(
 async def bcf_get_topic(
     project_id: uuid.UUID,
     topic_guid: uuid.UUID,
-    _user_id: CurrentUserId,
+    user_id: CurrentUserId,
     service: OpenCDEService = Depends(_get_service),
 ) -> BCFTopic:
     """Get a single BCF topic."""
+    await verify_project_access(project_id, user_id, service.session)
     return await service.get_topic(project_id, topic_guid)
 
 
@@ -183,6 +186,7 @@ async def bcf_update_topic(
     service: OpenCDEService = Depends(_get_service),
 ) -> BCFTopic:
     """Update a BCF topic."""
+    await verify_project_access(project_id, user_id, service.session)
     return await service.update_topic(project_id, topic_guid, data)
 
 
@@ -198,10 +202,11 @@ async def bcf_update_topic(
 async def bcf_list_comments(
     project_id: uuid.UUID,
     topic_guid: uuid.UUID,
-    _user_id: CurrentUserId,
+    user_id: CurrentUserId,
     service: OpenCDEService = Depends(_get_service),
 ) -> list[BCFComment]:
     """List BCF comments for a topic."""
+    await verify_project_access(project_id, user_id, service.session)
     return await service.list_comments(project_id, topic_guid)
 
 
@@ -218,6 +223,7 @@ async def bcf_create_comment(
     service: OpenCDEService = Depends(_get_service),
 ) -> BCFComment:
     """Create a new BCF comment on a topic."""
+    await verify_project_access(project_id, user_id, service.session)
     return await service.create_comment(
         project_id, topic_guid, data, uuid.UUID(user_id)
     )
@@ -235,10 +241,11 @@ async def bcf_create_comment(
 async def bcf_list_viewpoints(
     project_id: uuid.UUID,
     topic_guid: uuid.UUID,
-    _user_id: CurrentUserId,
+    user_id: CurrentUserId,
     service: OpenCDEService = Depends(_get_service),
 ) -> list[BCFViewpoint]:
     """List BCF viewpoints for a topic."""
+    await verify_project_access(project_id, user_id, service.session)
     return await service.list_viewpoints(project_id, topic_guid)
 
 
@@ -255,6 +262,7 @@ async def bcf_create_viewpoint(
     service: OpenCDEService = Depends(_get_service),
 ) -> BCFViewpoint:
     """Create a new BCF viewpoint for a topic."""
+    await verify_project_access(project_id, user_id, service.session)
     return await service.create_viewpoint(
         project_id, topic_guid, data, uuid.UUID(user_id)
     )

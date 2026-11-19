@@ -15,7 +15,7 @@ import uuid
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 
-from app.dependencies import CurrentUserId, SessionDep
+from app.dependencies import CurrentUserId, SessionDep, require_project_access
 from app.modules.teams.schemas import (
     AddMemberRequest,
     MembershipResponse,
@@ -36,7 +36,7 @@ def _get_service(session: SessionDep) -> TeamService:
 # ── Teams ────────────────────────────────────────────────────────────────
 
 
-@router.get("/", response_model=list[TeamResponse])
+@router.get("/", response_model=list[TeamResponse], dependencies=[Depends(require_project_access)])
 async def list_teams_by_query(
     project_id: uuid.UUID = Query(...),
     _user_id: CurrentUserId = None,  # type: ignore[assignment]
@@ -47,7 +47,7 @@ async def list_teams_by_query(
     return [TeamResponse.model_validate(t) for t in teams]
 
 
-@router.get("/project/{project_id}", response_model=list[TeamResponse])
+@router.get("/project/{project_id}", response_model=list[TeamResponse], dependencies=[Depends(require_project_access)])
 async def list_teams(
     project_id: uuid.UUID,
     _user_id: CurrentUserId,

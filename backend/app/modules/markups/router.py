@@ -32,7 +32,13 @@ import uuid
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from fastapi.responses import PlainTextResponse
 
-from app.dependencies import CurrentUserId, RequirePermission, SessionDep
+from app.dependencies import (
+    CurrentUserId,
+    RequirePermission,
+    SessionDep,
+    require_project_access,
+    require_project_access_if_given,
+)
 from app.modules.markups.schemas import (
     BoqLinkRequest,
     MarkupBulkCreate,
@@ -124,7 +130,7 @@ def _stamp_to_response(item: object) -> StampTemplateResponse:
 # ── Summary ──────────────────────────────────────────────────────────────────
 
 
-@router.get("/summary/", response_model=MarkupSummary)
+@router.get("/summary/", response_model=MarkupSummary, dependencies=[Depends(require_project_access)])
 async def get_summary(
     project_id: uuid.UUID = Query(...),
     user_id: CurrentUserId = None,  # type: ignore[assignment]
@@ -138,7 +144,7 @@ async def get_summary(
 # ── Export ───────────────────────────────────────────────────────────────────
 
 
-@router.get("/export/")
+@router.get("/export/", dependencies=[Depends(require_project_access)])
 async def export_markups(
     project_id: uuid.UUID = Query(...),
     format: str = Query(default="csv", pattern=r"^csv$"),
@@ -208,7 +214,7 @@ async def create_markup(
         )
 
 
-@router.get("/", response_model=list[MarkupResponse])
+@router.get("/", response_model=list[MarkupResponse], dependencies=[Depends(require_project_access)])
 async def list_markups(
     project_id: uuid.UUID = Query(...),
     document_id: str | None = Query(default=None),
@@ -362,7 +368,7 @@ async def create_stamp_template(
         )
 
 
-@router.get("/stamps/templates/", response_model=list[StampTemplateResponse])
+@router.get("/stamps/templates/", response_model=list[StampTemplateResponse], dependencies=[Depends(require_project_access_if_given)])
 async def list_stamp_templates(
     project_id: uuid.UUID | None = Query(default=None),
     user_id: CurrentUserId = None,  # type: ignore[assignment]

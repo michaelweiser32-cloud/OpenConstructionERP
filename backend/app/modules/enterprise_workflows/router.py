@@ -17,7 +17,7 @@ import uuid
 
 from fastapi import APIRouter, Depends, Query
 
-from app.dependencies import CurrentUserId, SessionDep
+from app.dependencies import CurrentUserId, SessionDep, require_project_access_if_given
 from app.modules.enterprise_workflows.schemas import (
     ApprovalDecision,
     ApprovalRequestCreate,
@@ -40,7 +40,7 @@ def _get_service(session: SessionDep) -> WorkflowService:
 # ── Workflows ───────────────────────────────────────────────────────────────
 
 
-@router.get("/", response_model=WorkflowListResponse)
+@router.get("/", response_model=WorkflowListResponse, dependencies=[Depends(require_project_access_if_given)])
 async def list_workflows(
     user_id: CurrentUserId = None,  # type: ignore[assignment]
     project_id: uuid.UUID | None = Query(default=None),

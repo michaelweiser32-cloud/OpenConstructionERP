@@ -33,7 +33,14 @@ from fastapi.responses import StreamingResponse
 
 logger = logging.getLogger(__name__)
 
-from app.dependencies import CurrentUserId, CurrentUserPayload, RequirePermission, SessionDep, verify_project_access
+from app.dependencies import (
+    CurrentUserId,
+    CurrentUserPayload,
+    RequirePermission,
+    SessionDep,
+    require_project_access,
+    verify_project_access,
+)
 from app.modules.schedule.schemas import (
     ActivityBimLinkRequest,
     ActivityCreate,
@@ -532,7 +539,7 @@ async def update_activity_bim_links(
     "/activities/by-bim-element/",
     response_model=list[ActivityResponse],
     summary="List activities linked to a BIM element",
-    dependencies=[Depends(RequirePermission("schedule.read"))],
+    dependencies=[Depends(RequirePermission("schedule.read")), Depends(require_project_access)],
 )
 async def list_activities_by_bim_element(
     _user_id: CurrentUserId,
